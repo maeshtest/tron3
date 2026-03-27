@@ -1,0 +1,828 @@
+import { useState, useMemo, useEffect } from "react";
+import DashboardLayout from "@/components/DashboardLayout";
+import { Link, useNavigate } from "react-router-dom";
+import { Button } from "@/components/ui/button";
+import {
+  Settings, Database, CreditCard, Shield, ArrowLeft, Save, Users,
+  CheckCircle2, XCircle, Clock, Bot, Plus, Trash2, Play, Square,
+  DollarSign, Activity, BarChart3, Search, Filter, ChevronLeft,
+  ChevronRight, RefreshCw, AlertTriangle, Edit2, TrendingUp, Zap
+} from "lucide-react";
+import { useSiteSettingsDB } from "@/hooks/useSiteSettingsDB";
+import {
+  useAdminTransactions, useAdminUsers, useAdminWallets, useAdminBots,
+  useApproveTransaction, useManageBot, useAdminAddBalance
+} from "@/hooks/useAdminData";
+import { useCryptoPrices } from "@/hooks/useCryptoPrices";
+import { toast } from "sonner";
+
+const ALL_CRYPTOS = [
+  { id: "bitcoin", name: "Bitcoin", symbol: "BTC" },
+  { id: "ethereum", name: "Ethereum", symbol: "ETH" },
+  { id: "tether", name: "Tether", symbol: "USDT" },
+  { id: "solana", name: "Solana", symbol: "SOL" },
+  { id: "binancecoin", name: "BNB", symbol: "BNB" },
+  { id: "ripple", name: "Ripple", symbol: "XRP" },
+  { id: "cardano", name: "Cardano", symbol: "ADA" },
+  { id: "polkadot", name: "Polkadot", symbol: "DOT" },
+  { id: "dogecoin", name: "Dogecoin", symbol: "DOGE" },
+  { id: "avalanche-2", name: "Avalanche", symbol: "AVAX" },
+  { id: "chainlink", name: "Chainlink", symbol: "LINK" },
+  { id: "litecoin", name: "Litecoin", symbol: "LTC" },
+  { id: "tron", name: "Tron", symbol: "TRX" },
+  { id: "stellar", name: "Stellar", symbol: "XLM" },
+];
+
+type Tab = "overview" | "transactions" | "wallets" | "bots" | "users" | "settings";
+
+// Helper: format large numbers
+const formatNumber = (num: number) => {
+  if (num >= 1e9) return `${(num / 1e9).toFixed(2)}B`;
+  if (num >= 1e6) return `${(num / 1e6).toFixed(2)}M`;
+  if (num >= 1e3) return `${(num / 1e3).toFixed(2)}K`;
+  return num.toFixed(2);
+};
+
+const AdminPage = () => {
+  const { settings, updateSetting, isLoading: settingsLoading } = useSiteSettingsDB();
+  const { getSymbol } = useCryptoPrices();
+  const [tab, setTab] = useState<Tab>("overview");
+  const navigate = useNavigate();
+
+  // Admin data hooks
+  const { data: transactions = [], isLoading: txLoading, refetch: refetchTx } = useAdminTransactions();
+  const { data: users = [], isLoading: usersLoading, refetch: refetchUsers } = useAdminUsers();
+  const { data: allWallets = [], isLoading: walletsLoading, refetch: refetchWallets } = useAdminWallets();
+  const { data: bots = [], isLoading: botsLoading, refetch: refetchBots } = useAdminBots();
+  const approveTx = useApproveTransaction();
+  const { createBot, updateBot, deleteBot } = useManageBot();
+  const addBalance = useAdminAddBalance();
+
+  // Pagination states
+  const [txPage, setTxPage] = useState(1);
+  const [txSearch, setTxSearch] = useState("");
+  const [userSearch, setUserSearch] = useState("");
+  const [walletSearch, setWalletSearch] = useState("");
+  const itemsPerPage = 10;
+
+  // Settings state
+  const [localName, setLocalName] = useState(settings.site_name);
+  const [localEmail, setLocalEmail] = useState(settings.support_email);
+  const [localCryptos, setLocalCryptos] = useState(settings.enabled_cryptos);
+  const [localWallets, setLocalWallets] = useState(settings.deposit_wallets);
+  const [localMinDeposit, setLocalMinDeposit] = useState(settings.min_deposit);
+  const [localMinWithdraw, setLocalMinWithdraw] = useState(settings.min_withdraw);
+  const [localFee, setLocalFee] = useState(settings.withdraw_fee_percent);
+  const [localMaintenance, setLocalMaintenance] = useState(settings.maintenance_mode || false);
+  const [localReferralBonus, setLocalReferralBonus] = useState(settings.referral_bonus_percent || 10);
+
+  // Bot creation state
+  const [newBotName, setNewBotName] = useState("");
+  const [newBotCrypto, setNewBotCrypto] = useState("bitcoin");
+  const [newBotStrategy, setNewBotStrategy] = useState("market_making");
+  const [newBotSpread, setNewBotSpread] = useState("0.5");
+  const [newBotSize, setNewBotSize] = useState("0.1");
+  const [newBotTier, setNewBotTier] = useState("free");
+  const [newBotDesc, setNewBotDesc] = useState("");
+  const [newBotIsAi, setNewBotIsAi] = useState(false);
+  const [newBotMinStake, setNewBotMinStake] = useState("30");
+  const [newBotDailyEarn, setNewBotDailyEarn] = useState("0");
+  const [editingBot, setEditingBot] = useState<any>(null);
+  const [editModalOpen, setEditModalOpen] = useState(false);
+
+  // Add balance state
+  const [addBalanceUserId, setAddBalanceUserId] = useState("");
+  const [addBalanceCrypto, setAddBalanceCrypto] = useState("usdt");
+  const [addBalanceAmount, setAddBalanceAmount] = useState("");
+
+  // Data calculations
+  const pendingTx = transactions.filter((t: any) => t.status === "pending");
+  const completedDeposits = transactions.filter((t: any) => t.type === "deposit" && t.status === "completed");
+  const completedWithdrawals = transactions.filter((t: any) => t.type === "withdrawal" && t.status === "completed");
+  const totalDeposited = completedDeposits.reduce((s: number, t: any) => s + Number(t.usd_amount), 0);
+  const totalWithdrawn = completedWithdrawals.reduce((s: number, t: any) => s + Number(t.usd_amount), 0);
+  const totalVolume = totalDeposited + totalWithdrawn;
+  const activeBots = bots.filter((b: any) => b.status === "running").length;
+  const activeUsers = users.filter((u: any) => u.last_login_at && new Date(u.last_login_at) > new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)).length;
+
+  // Filtered tables
+  const filteredTransactions = useMemo(() => {
+    return transactions.filter((tx: any) =>
+      tx.user_id.toLowerCase().includes(txSearch.toLowerCase()) ||
+      tx.crypto_id.toLowerCase().includes(txSearch.toLowerCase()) ||
+      tx.type.toLowerCase().includes(txSearch.toLowerCase())
+    );
+  }, [transactions, txSearch]);
+
+  const paginatedTransactions = filteredTransactions.slice((txPage - 1) * itemsPerPage, txPage * itemsPerPage);
+  const totalTxPages = Math.ceil(filteredTransactions.length / itemsPerPage);
+
+  const filteredUsers = useMemo(() => {
+    return users.filter((u: any) =>
+      u.user_id.toLowerCase().includes(userSearch.toLowerCase()) ||
+      (u.full_name && u.full_name.toLowerCase().includes(userSearch.toLowerCase()))
+    );
+  }, [users, userSearch]);
+
+  const filteredWallets = useMemo(() => {
+    return allWallets.filter((w: any) =>
+      w.user_id.toLowerCase().includes(walletSearch.toLowerCase()) ||
+      w.crypto_id.toLowerCase().includes(walletSearch.toLowerCase())
+    );
+  }, [allWallets, walletSearch]);
+
+  const handleSaveSettings = async () => {
+    try {
+      await Promise.all([
+        updateSetting.mutateAsync({ key: "site_name", value: localName }),
+        updateSetting.mutateAsync({ key: "support_email", value: localEmail }),
+        updateSetting.mutateAsync({ key: "enabled_cryptos", value: localCryptos }),
+        updateSetting.mutateAsync({ key: "deposit_wallets", value: localWallets }),
+        updateSetting.mutateAsync({ key: "min_deposit", value: localMinDeposit }),
+        updateSetting.mutateAsync({ key: "min_withdraw", value: localMinWithdraw }),
+        updateSetting.mutateAsync({ key: "withdraw_fee_percent", value: localFee }),
+        updateSetting.mutateAsync({ key: "maintenance_mode", value: localMaintenance }),
+        updateSetting.mutateAsync({ key: "referral_bonus_percent", value: localReferralBonus }),
+      ]);
+      toast.success("Settings saved!");
+    } catch (err: any) {
+      toast.error("Failed: " + err.message);
+    }
+  };
+
+  const toggleCrypto = (id: string) => setLocalCryptos(prev => prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id]);
+  const updateWalletAddress = (cryptoId: string, address: string) => {
+    setLocalWallets(prev => ({ ...prev, [cryptoId]: { ...(prev[cryptoId] || {}), address } }));
+  };
+
+  // Bot edit handler
+  const openEditBot = (bot: any) => {
+    setEditingBot(bot);
+    setNewBotName(bot.name);
+    setNewBotCrypto(bot.crypto_id);
+    setNewBotStrategy(bot.strategy);
+    setNewBotSpread(bot.config?.spread_percent?.toString() || "0.5");
+    setNewBotSize(bot.config?.order_size?.toString() || "0.1");
+    setNewBotTier(bot.tier || "free");
+    setNewBotDesc(bot.description || "");
+    setNewBotIsAi(bot.is_ai || false);
+    setNewBotMinStake(bot.min_stake?.toString() || "30");
+    setNewBotDailyEarn(bot.daily_earn?.toString() || "0");
+    setEditModalOpen(true);
+  };
+
+  const handleUpdateBot = () => {
+    if (!editingBot) return;
+    updateBot.mutate({
+      id: editingBot.id,
+      updates: {
+        name: newBotName,
+        crypto_id: newBotCrypto,
+        strategy: newBotStrategy,
+        config: {
+          spread_percent: Number(newBotSpread),
+          order_size: Number(newBotSize),
+          max_orders: 5,
+          tier: newBotTier,
+          description: newBotDesc,
+          is_ai: newBotIsAi,
+          min_stake: Number(newBotMinStake),
+          daily_earn: Number(newBotDailyEarn),
+        },
+        tier: newBotTier,
+        description: newBotDesc,
+        is_ai: newBotIsAi,
+        min_stake: Number(newBotMinStake),
+        daily_earn: Number(newBotDailyEarn),
+      },
+    });
+    setEditModalOpen(false);
+    setEditingBot(null);
+  };
+
+  const inputClass = "w-full h-10 rounded-xl bg-secondary border border-border px-4 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all";
+
+  const tabs: { key: Tab; label: string; icon: any; badge?: number }[] = [
+    { key: "overview", label: "Overview", icon: BarChart3 },
+    { key: "transactions", label: "Transactions", icon: Activity, badge: pendingTx.length },
+    { key: "wallets", label: "Wallets", icon: CreditCard },
+    { key: "bots", label: "Bots", icon: Bot },
+    { key: "users", label: "Users", icon: Users },
+    { key: "settings", label: "Settings", icon: Settings },
+  ];
+
+  return (
+    <DashboardLayout>
+      <div className="p-4 md:p-6 max-w-7xl mx-auto">
+        {/* Header */}
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+          <h1 className="text-2xl font-display font-bold text-foreground">Admin Dashboard</h1>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => {
+              refetchTx(); refetchUsers(); refetchWallets(); refetchBots();
+              toast.info("Refreshing data...");
+            }} className="gap-1.5">
+              <RefreshCw className="h-3.5 w-3.5" /> Refresh
+            </Button>
+          </div>
+        </div>
+
+        {/* Tab Bar */}
+        <div className="flex gap-1.5 mb-8 overflow-x-auto pb-2">
+          {tabs.map(t => (
+            <Button
+              key={t.key}
+              variant={tab === t.key ? "gold" : "ghost"}
+              size="sm"
+              className="gap-2 shrink-0"
+              onClick={() => setTab(t.key)}
+            >
+              <t.icon className="h-3.5 w-3.5" />
+              {t.label}
+              {t.badge ? <span className="bg-destructive text-destructive-foreground text-[10px] rounded-full px-1.5 py-0.5 font-bold">{t.badge}</span> : null}
+            </Button>
+          ))}
+        </div>
+
+        {/* OVERVIEW */}
+        {tab === "overview" && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {[
+                { label: "Total Users", value: users.length, icon: Users, color: "text-primary", change: "+12%", trend: "up" },
+                { label: "Active Users", value: activeUsers, icon: Users, color: "text-primary", change: "+5%", trend: "up" },
+                { label: "Pending Txs", value: pendingTx.length, icon: Clock, color: "text-amber-400", change: "awaiting", trend: "neutral" },
+                { label: "Active Bots", value: activeBots, icon: Bot, color: "text-accent", change: "running", trend: "neutral" },
+                { label: "Total Deposits", value: `$${formatNumber(totalDeposited)}`, icon: ArrowLeft, color: "text-profit", change: "lifetime", trend: "neutral" },
+                { label: "Total Withdrawals", value: `$${formatNumber(totalWithdrawn)}`, icon: ArrowLeft, color: "text-loss", change: "lifetime", trend: "neutral" },
+                { label: "Total Volume", value: `$${formatNumber(totalVolume)}`, icon: TrendingUp, color: "text-primary", change: "volume", trend: "neutral" },
+                { label: "Bot Profit (All)", value: `$${formatNumber(bots.reduce((s, b) => s + (b.total_profit || 0), 0))}`, icon: BarChart3, color: "text-profit", change: "total", trend: "neutral" },
+              ].map(s => (
+                <div key={s.label} className="bg-card border border-border rounded-xl p-4 hover:border-primary/30 transition-colors">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <s.icon className={`h-4 w-4 ${s.color}`} />
+                      <span className="text-xs text-muted-foreground">{s.label}</span>
+                    </div>
+                    {s.trend === "up" && <TrendingUp className="h-3 w-3 text-profit" />}
+                    {s.trend === "down" && <TrendingUp className="h-3 w-3 text-loss rotate-180" />}
+                  </div>
+                  <p className="text-xl font-bold text-foreground">{s.value}</p>
+                  <p className="text-[10px] text-muted-foreground mt-1">{s.change}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Recent pending */}
+            {pendingTx.length > 0 && (
+              <div className="bg-card border border-border rounded-xl p-5">
+                <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
+                  <Clock className="h-4 w-4 text-primary animate-pulse" /> Pending Approvals
+                </h3>
+                <div className="space-y-2">
+                  {pendingTx.slice(0, 5).map((tx: any) => (
+                    <div key={tx.id} className="flex items-center justify-between p-3 rounded-lg bg-secondary/50 border border-border">
+                      <div>
+                        <p className="text-sm font-medium text-foreground capitalize">{tx.type} — {getSymbol(tx.crypto_id)}</p>
+                        <p className="text-xs text-muted-foreground">${Number(tx.usd_amount).toLocaleString()} • {tx.user_id.slice(0, 8)}...</p>
+                      </div>
+                      <div className="flex gap-1.5">
+                        <Button variant="ghost" size="sm" className="h-8 text-profit hover:bg-profit/10" onClick={() => approveTx.mutate({ txId: tx.id, action: "completed" })} disabled={approveTx.isPending}>
+                          <CheckCircle2 className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="sm" className="h-8 text-loss hover:bg-loss/10" onClick={() => approveTx.mutate({ txId: tx.id, action: "rejected" })} disabled={approveTx.isPending}>
+                          <XCircle className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TRANSACTIONS */}
+        {tab === "transactions" && (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-lg font-display font-bold text-foreground">All Transactions</h2>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                <input
+                  type="text"
+                  placeholder="Search by user, coin, type..."
+                  value={txSearch}
+                  onChange={e => { setTxSearch(e.target.value); setTxPage(1); }}
+                  className="pl-8 pr-3 h-8 rounded-lg bg-secondary border border-border text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary w-64"
+                />
+              </div>
+            </div>
+            {txLoading ? (
+              <div className="flex justify-center py-12"><RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+            ) : filteredTransactions.length === 0 ? (
+              <p className="text-muted-foreground text-sm text-center py-12">No transactions found.</p>
+            ) : (
+              <>
+                <div className="bg-card border border-border rounded-xl overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-border text-muted-foreground">
+                          <th className="text-left py-3 px-4">Type</th>
+                          <th className="text-left py-3 px-4">Coin</th>
+                          <th className="text-right py-3 px-4">Amount</th>
+                          <th className="text-right py-3 px-4">USD</th>
+                          <th className="text-left py-3 px-4">User</th>
+                          <th className="text-left py-3 px-4">Status</th>
+                          <th className="text-left py-3 px-4">Date</th>
+                          <th className="text-right py-3 px-4">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {paginatedTransactions.map((tx: any) => (
+                          <tr key={tx.id} className="border-b border-border/50 hover:bg-secondary/30">
+                            <td className={`py-3 px-4 font-medium capitalize ${tx.type === "deposit" ? "text-profit" : "text-loss"}`}>{tx.type}</td>
+                            <td className="py-3 px-4 text-foreground">{getSymbol(tx.crypto_id)}</td>
+                            <td className="py-3 px-4 text-right text-foreground">{Number(tx.amount).toFixed(6)}</td>
+                            <td className="py-3 px-4 text-right font-semibold text-foreground">${Number(tx.usd_amount).toLocaleString()}</td>
+                            <td className="py-3 px-4 text-xs text-muted-foreground font-mono">{tx.user_id.slice(0, 8)}...</td>
+                            <td className="py-3 px-4">
+                              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                                tx.status === "completed" ? "bg-profit/10 text-profit" :
+                                tx.status === "rejected" ? "bg-loss/10 text-loss" :
+                                "bg-primary/10 text-primary"
+                              }`}>{tx.status}</span>
+                            </td>
+                            <td className="py-3 px-4 text-xs text-muted-foreground">{new Date(tx.created_at).toLocaleDateString()}</td>
+                            <td className="py-3 px-4 text-right">
+                              {tx.status === "pending" && (
+                                <div className="flex gap-1 justify-end">
+                                  <Button variant="ghost" size="sm" className="h-7 px-2 text-profit hover:bg-profit/10" onClick={() => approveTx.mutate({ txId: tx.id, action: "completed" })} disabled={approveTx.isPending}>
+                                    <CheckCircle2 className="h-3.5 w-3.5" />
+                                  </Button>
+                                  <Button variant="ghost" size="sm" className="h-7 px-2 text-loss hover:bg-loss/10" onClick={() => approveTx.mutate({ txId: tx.id, action: "rejected" })} disabled={approveTx.isPending}>
+                                    <XCircle className="h-3.5 w-3.5" />
+                                  </Button>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                {totalTxPages > 1 && (
+                  <div className="flex justify-center gap-2">
+                    <Button variant="outline" size="sm" onClick={() => setTxPage(p => Math.max(1, p-1))} disabled={txPage === 1}>
+                      <ChevronLeft className="h-3.5 w-3.5" />
+                    </Button>
+                    <span className="text-sm text-muted-foreground">Page {txPage} of {totalTxPages}</span>
+                    <Button variant="outline" size="sm" onClick={() => setTxPage(p => Math.min(totalTxPages, p+1))} disabled={txPage === totalTxPages}>
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* WALLETS */}
+        {tab === "wallets" && (
+          <div className="space-y-6">
+            <h2 className="text-lg font-display font-bold text-foreground">User Wallets</h2>
+
+            {/* Add balance */}
+            <div className="bg-card border border-border rounded-xl p-5">
+              <h3 className="text-sm font-semibold text-foreground mb-3">Add/Remove Balance</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                <input type="text" value={addBalanceUserId} onChange={e => setAddBalanceUserId(e.target.value)} placeholder="User ID" className={inputClass} />
+                <select value={addBalanceCrypto} onChange={e => setAddBalanceCrypto(e.target.value)} className={inputClass}>
+                  <option value="usdt">USDT</option>
+                  {ALL_CRYPTOS.filter(c => c.id !== "tether").map(c => <option key={c.id} value={c.id}>{c.symbol}</option>)}
+                </select>
+                <input type="number" value={addBalanceAmount} onChange={e => setAddBalanceAmount(e.target.value)} placeholder="Amount" className={inputClass} />
+                <Button variant="gold" onClick={() => {
+                  if (!addBalanceUserId || !addBalanceAmount) return toast.error("Fill all fields");
+                  addBalance.mutate({ userId: addBalanceUserId, cryptoId: addBalanceCrypto, amount: Number(addBalanceAmount) });
+                  setAddBalanceAmount("");
+                }} disabled={addBalance.isPending}>
+                  {addBalance.isPending ? "..." : "Update Balance"}
+                </Button>
+              </div>
+            </div>
+
+            <div className="flex justify-between items-center">
+              <h3 className="text-sm font-semibold text-foreground">All Wallets</h3>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                <input
+                  type="text"
+                  placeholder="Search by user or coin..."
+                  value={walletSearch}
+                  onChange={e => setWalletSearch(e.target.value)}
+                  className="pl-8 pr-3 h-8 rounded-lg bg-secondary border border-border text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary w-64"
+                />
+              </div>
+            </div>
+
+            {walletsLoading ? (
+              <div className="flex justify-center py-12"><RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+            ) : filteredWallets.length === 0 ? (
+              <p className="text-muted-foreground text-sm text-center py-8">No wallets found.</p>
+            ) : (
+              <div className="bg-card border border-border rounded-xl overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border text-muted-foreground">
+                        <th className="text-left py-3 px-4">User ID</th>
+                        <th className="text-left py-3 px-4">Coin</th>
+                        <th className="text-right py-3 px-4">Balance</th>
+                        <th className="text-left py-3 px-4">Updated</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredWallets.map((w: any) => (
+                        <tr key={w.id} className="border-b border-border/50">
+                          <td className="py-3 px-4 text-xs font-mono text-muted-foreground">{w.user_id.slice(0, 12)}...</td>
+                          <td className="py-3 px-4 text-foreground font-medium">{getSymbol(w.crypto_id)}</td>
+                          <td className="py-3 px-4 text-right font-bold text-foreground">{w.balance.toFixed(w.crypto_id === "usdt" ? 2 : 6)}</td>
+                          <td className="py-3 px-4 text-xs text-muted-foreground">{new Date(w.updated_at).toLocaleDateString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* BOTS */}
+        {tab === "bots" && (
+          <div className="space-y-6">
+            <h2 className="text-lg font-display font-bold text-foreground">Trading Bots Management</h2>
+
+            {/* Create bot */}
+            <div className="bg-card border border-border rounded-xl p-5 space-y-4">
+              <h3 className="text-sm font-semibold text-foreground flex items-center gap-2"><Plus className="h-4 w-4" /> Create Platform Bot</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Bot Name</label>
+                  <input type="text" value={newBotName} onChange={e => setNewBotName(e.target.value)} placeholder="e.g. Pionex Grid Bot" className={inputClass} />
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Crypto</label>
+                  <select value={newBotCrypto} onChange={e => setNewBotCrypto(e.target.value)} className={inputClass}>
+                    {ALL_CRYPTOS.filter(c => c.id !== "tether").map(c => <option key={c.id} value={c.id}>{c.symbol}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Strategy</label>
+                  <select value={newBotStrategy} onChange={e => setNewBotStrategy(e.target.value)} className={inputClass}>
+                    <option value="market_making">Market Making (Spot Grid)</option>
+                    <option value="trend_following">Trend Following (DCA)</option>
+                    <option value="arbitrage">Arbitrage</option>
+                    <option value="momentum">Momentum</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Tier</label>
+                  <select value={newBotTier} onChange={e => setNewBotTier(e.target.value)} className={inputClass}>
+                    <option value="free">Free</option>
+                    <option value="pro">Pro</option>
+                    <option value="elite">Elite</option>
+                    <option value="vip">VIP</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Min Stake (USDT)</label>
+                  <input type="number" value={newBotMinStake} onChange={e => setNewBotMinStake(e.target.value)} className={inputClass} />
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Daily Earn %</label>
+                  <input type="number" value={newBotDailyEarn} onChange={e => setNewBotDailyEarn(e.target.value)} step="0.01" className={inputClass} />
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Spread %</label>
+                  <input type="number" value={newBotSpread} onChange={e => setNewBotSpread(e.target.value)} step="0.1" className={inputClass} />
+                </div>
+                <div className="flex items-center gap-2 pt-5">
+                  <input type="checkbox" id="isAi" checked={newBotIsAi} onChange={e => setNewBotIsAi(e.target.checked)} className="rounded" />
+                  <label htmlFor="isAi" className="text-xs text-foreground">AI-Powered Bot</label>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs text-muted-foreground mb-1">Description</label>
+                <textarea value={newBotDesc} onChange={e => setNewBotDesc(e.target.value)} placeholder="Bot description..." className={inputClass + " h-16 resize-none"} />
+              </div>
+              <Button variant="gold" className="w-full" onClick={() => {
+                if (!newBotName) return toast.error("Enter a bot name");
+                createBot.mutate({
+                  name: newBotName,
+                  crypto_id: newBotCrypto,
+                  strategy: newBotStrategy,
+                  config: { spread_percent: Number(newBotSpread), order_size: Number(newBotSize), max_orders: 5, tier: newBotTier, description: newBotDesc, is_ai: newBotIsAi, min_stake: Number(newBotMinStake), daily_earn: Number(newBotDailyEarn) },
+                });
+                setNewBotName(""); setNewBotDesc("");
+              }} disabled={createBot.isPending}>
+                {createBot.isPending ? "Creating..." : "Create Bot"}
+              </Button>
+            </div>
+
+            {/* Bot list */}
+            {botsLoading ? (
+              <div className="flex justify-center py-12"><RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+            ) : bots.length === 0 ? (
+              <p className="text-muted-foreground text-sm text-center py-8">No bots configured.</p>
+            ) : (
+              <div className="space-y-3">
+                {bots.map((bot: any) => (
+                  <div key={bot.id} className="bg-card border border-border rounded-xl p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-bold text-foreground">{bot.name}</h3>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                          (bot.tier || "free") === "free" ? "bg-emerald-500/20 text-emerald-400" :
+                          (bot.tier || "free") === "pro" ? "bg-blue-500/20 text-blue-400" :
+                          (bot.tier || "free") === "elite" ? "bg-purple-500/20 text-purple-400" :
+                          "bg-amber-500/20 text-amber-400"
+                        }`}>{(bot.tier || "free").toUpperCase()}</span>
+                        {bot.is_ai && <span className="text-[10px] bg-primary/20 text-primary px-1.5 py-0.5 rounded">⚡ AI</span>}
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${bot.status === "running" ? "bg-profit/10 text-profit" : "bg-muted text-muted-foreground"}`}>{bot.status}</span>
+                      </div>
+                      <div className="flex gap-1.5">
+                        <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => openEditBot(bot)}>
+                          <Edit2 className="h-3 w-3" /> Edit
+                        </Button>
+                        {bot.status === "running" ? (
+                          <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => updateBot.mutate({ id: bot.id, updates: { status: "stopped" } })}>
+                            <Square className="h-3 w-3" /> Stop
+                          </Button>
+                        ) : (
+                          <Button size="sm" className="h-7 text-xs gap-1 bg-profit hover:bg-profit/80 text-white" onClick={() => updateBot.mutate({ id: bot.id, updates: { status: "running" } })}>
+                            <Play className="h-3 w-3" /> Start
+                          </Button>
+                        )}
+                        <Button variant="ghost" size="sm" className="h-7 text-loss hover:bg-loss/10" onClick={() => deleteBot.mutate(bot.id)}>
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground mb-2">{getSymbol(bot.crypto_id)}/USDT • {bot.strategy.replace("_", " ")} • Min: ${Number(bot.min_stake || 0).toFixed(0)} • Daily: {Number(bot.daily_earn || 0).toFixed(2)}%</p>
+                    <div className="grid grid-cols-4 gap-3 text-xs">
+                      <div className="bg-secondary rounded-lg p-2 text-center">
+                        <p className="text-muted-foreground">PNL</p>
+                        <p className={`font-bold ${bot.total_profit >= 0 ? "text-profit" : "text-loss"}`}>+${bot.total_profit.toLocaleString()}</p>
+                      </div>
+                      <div className="bg-secondary rounded-lg p-2 text-center">
+                        <p className="text-muted-foreground">Trades</p>
+                        <p className="font-bold text-foreground">{bot.total_trades.toLocaleString()}</p>
+                      </div>
+                      <div className="bg-secondary rounded-lg p-2 text-center">
+                        <p className="text-muted-foreground">Users</p>
+                        <p className="font-bold text-foreground">{(bot.bot_users || 0).toLocaleString()}</p>
+                      </div>
+                      <div className="bg-secondary rounded-lg p-2 text-center">
+                        <p className="text-muted-foreground">Runs</p>
+                        <p className="font-bold text-foreground">{bot.runs || 0}</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* USERS */}
+        {tab === "users" && (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-lg font-display font-bold text-foreground">Registered Users ({users.length})</h2>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                <input
+                  type="text"
+                  placeholder="Search by ID or name..."
+                  value={userSearch}
+                  onChange={e => setUserSearch(e.target.value)}
+                  className="pl-8 pr-3 h-8 rounded-lg bg-secondary border border-border text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary w-64"
+                />
+              </div>
+            </div>
+            {usersLoading ? (
+              <div className="flex justify-center py-12"><RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+            ) : filteredUsers.length === 0 ? (
+              <p className="text-muted-foreground text-sm text-center py-8">No users found.</p>
+            ) : (
+              <div className="bg-card border border-border rounded-xl overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border text-muted-foreground">
+                        <th className="text-left py-3 px-4">User ID</th>
+                        <th className="text-left py-3 px-4">Name</th>
+                        <th className="text-left py-3 px-4">Country</th>
+                        <th className="text-left py-3 px-4">Referral</th>
+                        <th className="text-left py-3 px-4">Joined</th>
+                        <th className="text-left py-3 px-4">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredUsers.map((u: any) => (
+                        <tr key={u.user_id} className="border-b border-border/50">
+                          <td className="py-3 px-4 text-xs font-mono text-muted-foreground">{u.user_id.slice(0, 12)}...</td>
+                          <td className="py-3 px-4 text-foreground font-medium">{u.full_name || "—"}</td>
+                          <td className="py-3 px-4 text-muted-foreground">{u.country || "—"}</td>
+                          <td className="py-3 px-4 text-xs text-muted-foreground">{u.referral_code || "—"}</td>
+                          <td className="py-3 px-4 text-xs text-muted-foreground">{new Date(u.created_at).toLocaleDateString()}</td>
+                          <td className="py-3 px-4">
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${u.banned ? "bg-loss/10 text-loss" : "bg-profit/10 text-profit"}`}>
+                              {u.banned ? "Banned" : "Active"}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* SETTINGS */}
+        {tab === "settings" && (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-display font-bold text-foreground">Site Settings</h2>
+              <Button variant="gold" size="sm" className="gap-2" onClick={handleSaveSettings} disabled={updateSetting.isPending}>
+                <Save className="h-3.5 w-3.5" /> {updateSetting.isPending ? "Saving..." : "Save All"}
+              </Button>
+            </div>
+
+            {/* General */}
+            <div className="bg-card border border-border rounded-xl p-5 space-y-4">
+              <h3 className="text-sm font-semibold text-foreground flex items-center gap-2"><Settings className="h-4 w-4" /> General</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Site Name</label>
+                  <input type="text" value={localName} onChange={e => setLocalName(e.target.value)} className={inputClass} />
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Support Email</label>
+                  <input type="email" value={localEmail} onChange={e => setLocalEmail(e.target.value)} className={inputClass} />
+                </div>
+              </div>
+            </div>
+
+            {/* Fees & Limits */}
+            <div className="bg-card border border-border rounded-xl p-5 space-y-4">
+              <h3 className="text-sm font-semibold text-foreground flex items-center gap-2"><DollarSign className="h-4 w-4" /> Fees & Limits</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Min Deposit (USD)</label>
+                  <input type="number" value={localMinDeposit} onChange={e => setLocalMinDeposit(Number(e.target.value))} className={inputClass} />
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Min Withdrawal (USD)</label>
+                  <input type="number" value={localMinWithdraw} onChange={e => setLocalMinWithdraw(Number(e.target.value))} className={inputClass} />
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Withdrawal Fee (%)</label>
+                  <input type="number" value={localFee} onChange={e => setLocalFee(Number(e.target.value))} step="0.1" className={inputClass} />
+                </div>
+              </div>
+            </div>
+
+            {/* Features */}
+            <div className="bg-card border border-border rounded-xl p-5 space-y-4">
+              <h3 className="text-sm font-semibold text-foreground flex items-center gap-2"><Zap className="h-4 w-4" /> Features</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs text-foreground">Maintenance Mode</label>
+                  <input type="checkbox" checked={localMaintenance} onChange={e => setLocalMaintenance(e.target.checked)} className="toggle" />
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Referral Bonus (%)</label>
+                  <input type="number" value={localReferralBonus} onChange={e => setLocalReferralBonus(Number(e.target.value))} step="0.5" className={inputClass} />
+                </div>
+              </div>
+            </div>
+
+            {/* Enabled Cryptos */}
+            <div className="bg-card border border-border rounded-xl p-5">
+              <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2"><Database className="h-4 w-4" /> Enabled Cryptocurrencies</h3>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                {ALL_CRYPTOS.map(c => {
+                  const enabled = localCryptos.includes(c.id);
+                  return (
+                    <button key={c.id} onClick={() => toggleCrypto(c.id)} className={`flex items-center gap-2 p-2.5 rounded-lg border text-left text-sm transition-all ${enabled ? "border-primary bg-primary/10 text-foreground" : "border-border text-muted-foreground hover:border-muted-foreground"}`}>
+                      <div className={`w-2.5 h-2.5 rounded-full ${enabled ? "bg-profit" : "bg-muted"}`} />
+                      {c.symbol}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Deposit Wallets */}
+            <div className="bg-card border border-border rounded-xl p-5 space-y-3">
+              <h3 className="text-sm font-semibold text-foreground flex items-center gap-2"><CreditCard className="h-4 w-4" /> Deposit Wallet Addresses</h3>
+              {ALL_CRYPTOS.filter(c => localCryptos.includes(c.id)).map(c => (
+                <div key={c.id}>
+                  <label className="block text-xs text-muted-foreground mb-1">{c.name} ({c.symbol})</label>
+                  <input
+                    type="text"
+                    value={localWallets[c.id]?.address || ""}
+                    onChange={e => updateWalletAddress(c.id, e.target.value)}
+                    placeholder={`${c.symbol} wallet address`}
+                    className={inputClass}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Edit Bot Modal */}
+      {editModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-card border border-border rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-4 border-b border-border">
+              <h2 className="text-lg font-bold text-foreground">Edit Bot</h2>
+              <button onClick={() => setEditModalOpen(false)} className="p-1 hover:bg-secondary rounded-lg">
+                <XCircle className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="p-4 space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Bot Name</label>
+                  <input type="text" value={newBotName} onChange={e => setNewBotName(e.target.value)} className={inputClass} />
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Crypto</label>
+                  <select value={newBotCrypto} onChange={e => setNewBotCrypto(e.target.value)} className={inputClass}>
+                    {ALL_CRYPTOS.filter(c => c.id !== "tether").map(c => <option key={c.id} value={c.id}>{c.symbol}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Strategy</label>
+                  <select value={newBotStrategy} onChange={e => setNewBotStrategy(e.target.value)} className={inputClass}>
+                    <option value="market_making">Market Making</option>
+                    <option value="trend_following">Trend Following</option>
+                    <option value="arbitrage">Arbitrage</option>
+                    <option value="momentum">Momentum</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Tier</label>
+                  <select value={newBotTier} onChange={e => setNewBotTier(e.target.value)} className={inputClass}>
+                    <option value="free">Free</option>
+                    <option value="pro">Pro</option>
+                    <option value="elite">Elite</option>
+                    <option value="vip">VIP</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Min Stake (USDT)</label>
+                  <input type="number" value={newBotMinStake} onChange={e => setNewBotMinStake(e.target.value)} className={inputClass} />
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Daily Earn %</label>
+                  <input type="number" value={newBotDailyEarn} onChange={e => setNewBotDailyEarn(e.target.value)} step="0.01" className={inputClass} />
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Spread %</label>
+                  <input type="number" value={newBotSpread} onChange={e => setNewBotSpread(e.target.value)} step="0.1" className={inputClass} />
+                </div>
+                <div className="flex items-center gap-2 pt-5">
+                  <input type="checkbox" id="editIsAi" checked={newBotIsAi} onChange={e => setNewBotIsAi(e.target.checked)} className="rounded" />
+                  <label htmlFor="editIsAi" className="text-xs text-foreground">AI-Powered</label>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs text-muted-foreground mb-1">Description</label>
+                <textarea value={newBotDesc} onChange={e => setNewBotDesc(e.target.value)} className={inputClass + " h-20 resize-none"} />
+              </div>
+              <div className="flex gap-3">
+                <Button variant="outline" className="flex-1" onClick={() => setEditModalOpen(false)}>Cancel</Button>
+                <Button variant="gold" className="flex-1" onClick={handleUpdateBot} disabled={updateBot.isPending}>
+                  {updateBot.isPending ? "Saving..." : "Save Changes"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </DashboardLayout>
+  );
+};
+
+export default AdminPage;

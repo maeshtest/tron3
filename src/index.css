@@ -1,0 +1,147 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
+@layer base {
+  :root {
+    --background: 210 20% 98%;
+    --foreground: 222 47% 11%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    --primary: 252 69% 64%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 210 20% 96%;
+    --secondary-foreground: 222 47% 11%;
+
+    --muted: 210 20% 96%;
+    --muted-foreground: 215 16% 47%;
+
+    --accent: 190 100% 50%;
+    --accent-foreground: 222 47% 11%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 252 69% 64%;
+
+    --radius: 0.75rem;
+
+    --profit: 145 63% 42%;
+    --loss: 0 72% 51%;
+    --surface: 210 20% 96%;
+    --surface-light: 210 20% 93%;
+
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 222 47% 11%;
+    --sidebar-primary: 252 69% 64%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 210 20% 96%;
+    --sidebar-accent-foreground: 222 47% 11%;
+    --sidebar-border: 214 32% 91%;
+    --sidebar-ring: 252 69% 64%;
+  }
+
+  .dark {
+    --background: 225 33% 7%;
+    --foreground: 210 40% 98%;
+
+    --card: 224 28% 11%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 224 28% 11%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 252 69% 64%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 224 28% 16%;
+    --secondary-foreground: 210 40% 90%;
+
+    --muted: 224 28% 16%;
+    --muted-foreground: 215 20% 55%;
+
+    --accent: 190 100% 50%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 224 20% 18%;
+    --input: 224 28% 16%;
+    --ring: 252 69% 64%;
+
+    --profit: 145 63% 49%;
+    --loss: 0 72% 51%;
+    --surface: 224 28% 13%;
+    --surface-light: 224 28% 18%;
+
+    --sidebar-background: 224 28% 9%;
+    --sidebar-foreground: 210 40% 98%;
+    --sidebar-primary: 252 69% 64%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 224 28% 16%;
+    --sidebar-accent-foreground: 210 40% 98%;
+    --sidebar-border: 224 20% 18%;
+    --sidebar-ring: 252 69% 64%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans;
+    font-family: 'Inter', sans-serif;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Space Grotesk', sans-serif;
+  }
+}
+
+@layer utilities {
+  .text-profit {
+    color: hsl(var(--profit));
+  }
+  .text-loss {
+    color: hsl(var(--loss));
+  }
+  .bg-surface {
+    background-color: hsl(var(--surface));
+  }
+  .bg-surface-light {
+    background-color: hsl(var(--surface-light));
+  }
+  .glow-primary {
+    box-shadow: 0 0 20px hsl(var(--primary) / 0.2), 0 0 60px hsl(var(--primary) / 0.05);
+  }
+  .glow-accent {
+    box-shadow: 0 0 20px hsl(var(--accent) / 0.2), 0 0 60px hsl(var(--accent) / 0.05);
+  }
+  .gradient-primary {
+    background: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--accent)));
+  }
+}
+
+/* RTL Support */
+[dir="rtl"] .animate-ticker-scroll {
+  animation-direction: reverse;
+}
+
+[dir="rtl"] .space-x-2 > :not([hidden]) ~ :not([hidden]),
+[dir="rtl"] .space-x-3 > :not([hidden]) ~ :not([hidden]),
+[dir="rtl"] .space-x-4 > :not([hidden]) ~ :not([hidden]) {
+  --tw-space-x-reverse: 1;
+}
