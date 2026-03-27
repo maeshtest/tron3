@@ -90,11 +90,26 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </button>
       </div>
 
-      {/* Balance card */}
+      {/* Profile & Balance card */}
       {!collapsed && (
-        <div className="mx-3 mt-3 p-3 rounded-xl bg-primary/10 border border-primary/20">
-          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Portfolio</p>
-          <p className="text-lg font-bold text-foreground">${totalUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+        <div className="mx-3 mt-3 space-y-2">
+          <div className="flex items-center gap-2.5 p-3 rounded-xl bg-secondary/50 border border-border">
+            <div className="w-9 h-9 rounded-full bg-primary/20 flex items-center justify-center shrink-0">
+              {profile?.avatar_url ? (
+                <img src={profile.avatar_url} alt="" className="w-9 h-9 rounded-full object-cover" />
+              ) : (
+                <User className="h-4 w-4 text-primary" />
+              )}
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-foreground truncate">{profile?.display_name || user?.email?.split("@")[0] || "User"}</p>
+              <p className="text-[10px] text-muted-foreground truncate">{user?.email}</p>
+            </div>
+          </div>
+          <div className="p-3 rounded-xl bg-primary/10 border border-primary/20">
+            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Portfolio</p>
+            <p className="text-lg font-bold text-foreground">${totalUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+          </div>
         </div>
       )}
 
