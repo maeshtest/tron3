@@ -288,6 +288,7 @@ const BotsPage = () => {
           price: tradePrice,
           amount,
           side,
+          total: tradePrice * amount,
           pnl,
         });
 
