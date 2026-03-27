@@ -927,7 +927,7 @@ const BotsPage = () => {
                           const staked = Number((bot.config as any)?.staked_amount || 0);
                           const profit = Number(bot.total_profit || 0);
                           return (
-                            <div key={bot.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-3 bg-secondary/50 rounded-lg border border-border gap-2">
+                            <div key={bot.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-3 bg-secondary/50 rounded-lg border border-border gap-2 cursor-pointer hover:border-primary/30 transition-colors" onClick={() => setViewingRunningBot(bot)}>
                               <div>
                                 <p className="text-sm font-medium text-foreground">{bot.name}</p>
                                 <p className="text-[11px] text-muted-foreground">{getSymbol(bot.crypto_id)}/USDT • Staked: ${staked.toFixed(2)}</p>
@@ -941,7 +941,8 @@ const BotsPage = () => {
                                   variant="outline"
                                   size="sm"
                                   className="text-[10px] h-7 text-loss border-loss/30 hover:bg-loss/10"
-                                  onClick={() => {
+                                  onClick={(e) => {
+                                    e.stopPropagation();
                                     if (confirm(`Stop bot and withdraw $${(staked + profit).toFixed(2)} USDT?`)) {
                                       unstakeBot.mutate(bot);
                                     }
