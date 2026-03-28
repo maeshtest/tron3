@@ -534,7 +534,7 @@ const FuturesPage = () => {
                 </div>
 
                 <p className="text-xs text-muted-foreground">
-                  Available USDT: {sym}{usdtBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  {demoMode ? "Demo" : "Available"} USDT: {sym}{usdtBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                 </p>
 
                 <Button
