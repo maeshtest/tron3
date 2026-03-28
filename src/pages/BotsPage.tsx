@@ -471,7 +471,7 @@ const BotsPage = () => {
     });
   }, [platformBots, mainTab, tierFilter, strategyFilter, searchQuery]);
 
-  const isPremiumLocked = (bot: any) => {
+  const isPremiumTier = (bot: any) => {
     const tier = (bot.tier || "free").toLowerCase();
     return tier === "pro" || tier === "elite" || tier === "vip";
   };
