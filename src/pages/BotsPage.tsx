@@ -902,8 +902,9 @@ const BotsPage = () => {
 
   return (
     <DashboardLayout>
+      <TradePopup />
       <DemoModeBanner />
-      <div className="flex flex-col h-[calc(100vh-4rem)] overflow-hidden">
+      <div className="flex flex-col h-[calc(100vh-3.5rem)] md:h-[calc(100vh-0px)] overflow-hidden">
         {/* Top nav bar */}
         <div className="flex items-center gap-4 px-4 py-2 border-b border-border bg-card text-sm overflow-x-auto whitespace-nowrap">
           <Link to="/dashboard" className="flex items-center gap-1 text-muted-foreground hover:text-foreground">
