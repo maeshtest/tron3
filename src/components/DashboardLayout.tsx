@@ -106,9 +106,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <User className="h-4 w-4 text-primary" />
               )}
             </div>
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-foreground truncate">{profile?.display_name || user?.email?.split("@")[0] || "User"}</p>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5">
+                <p className="text-sm font-semibold text-foreground truncate">{profile?.display_name || user?.email?.split("@")[0] || "User"}</p>
+                {kycVerified && <BadgeCheck className="h-3.5 w-3.5 text-emerald-400 shrink-0" />}
+              </div>
               <p className="text-[10px] text-muted-foreground truncate">{user?.email}</p>
+              <div className="flex items-center gap-1.5 mt-1">
+                <AccountTierBadge tier={accountTier} compact />
+                {accountTier === "free" && (
+                  <button onClick={() => setShowUpgrade(true)} className="text-[9px] text-primary hover:underline flex items-center gap-0.5">
+                    <ArrowUp className="h-2.5 w-2.5" /> Upgrade
+                  </button>
+                )}
+              </div>
             </div>
           </div>
           <div className="p-3 rounded-xl bg-primary/10 border border-primary/20">
