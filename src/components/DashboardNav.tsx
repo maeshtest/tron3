@@ -1,4 +1,5 @@
-import { Home, TrendingUp, ArrowLeftRight, Bot, Wallet, LogOut, Moon, Sun, Shield, History } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Home, TrendingUp, ArrowLeftRight, Bot, Wallet, LogOut, Moon, Sun, Shield, History, Crown } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
@@ -6,19 +7,40 @@ import { useWallets } from "@/hooks/useWallets";
 import { useCryptoPrices } from "@/hooks/useCryptoPrices";
 import { useAppStore } from "@/stores/useAppStore";
 import { useAdmin } from "@/hooks/useAdmin";
+import { supabase } from "@/integrations/supabase/client";
 import TronnlixLogo from "@/components/TronnlixLogo";
 import LanguageSelector from "@/components/LanguageSelector";
 import { useTranslation } from "react-i18next";
+import UpgradeTierModal from "@/components/UpgradeTierModal"; // adjust path as needed
 
 const DashboardNav = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { signOut } = useAuth();
+  const { signOut, user } = useAuth();
   const { wallets } = useWallets();
   const { prices } = useCryptoPrices();
   const { darkMode, toggleDarkMode } = useAppStore();
   const { isAdmin } = useAdmin();
   const { t } = useTranslation();
+
+  const [currentTier, setCurrentTier] = useState<string>("free");
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+
+  // Fetch user's current account tier
+  useEffect(() => {
+    if (!user) return;
+    const fetchTier = async () => {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("account_tier")
+        .eq("user_id", user.id)
+        .single();
+      if (!error && data) {
+        setCurrentTier(data.account_tier || "free");
+      }
+    };
+    fetchTier();
+  }, [user]);
 
   const navItems = [
     { icon: Home, path: "/dashboard", label: t("nav.dashboard") },
@@ -38,59 +60,100 @@ const DashboardNav = () => {
     navigate("/");
   };
 
-  return (
-    <nav className="fixed top-0 left-0 right-0 z-50 border-b border-border bg-background/95 backdrop-blur-md">
-      <div className="container flex h-14 items-center justify-between">
-        <Link to="/dashboard" className="flex items-center gap-2">
-          <TronnlixLogo size={28} />
-          <span className="text-lg font-display font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">Tronnlix</span>
-        </Link>
+  const handleUpgradeSuccess = () => {
+    // Refresh tier after successful upgrade
+    const fetchTier = async () => {
+      if (!user) return;
+      const { data } = await supabase
+        .from("profiles")
+        .select("account_tier")
+        .eq("user_id", user.id)
+        .single();
+      if (data) setCurrentTier(data.account_tier);
+    };
+    fetchTier();
+  };
 
-        <div className="hidden md:flex items-center gap-1">
-          {navItems.map((item) => {
-            const active = location.pathname === item.path;
-            return (
-              <Link key={item.path} to={item.path}>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className={`gap-2 text-xs ${active ? "text-primary bg-primary/10 border-b-2 border-primary rounded-b-none" : "text-muted-foreground"}`}
-                >
-                  <item.icon className="h-4 w-4" />
-                  {item.label}
+  // Determine if upgrade button should be shown (not VIP)
+  const showUpgrade = currentTier !== "vip";
+
+  return (
+    <>
+      <nav className="fixed top-0 left-0 right-0 z-50 border-b border-border bg-background/95 backdrop-blur-md">
+        <div className="container flex h-14 items-center justify-between">
+          <Link to="/dashboard" className="flex items-center gap-2">
+            <TronnlixLogo size={28} />
+            <span className="text-lg font-display font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">Tronnlix</span>
+          </Link>
+
+          <div className="hidden md:flex items-center gap-1">
+            {navItems.map((item) => {
+              const active = location.pathname === item.path;
+              return (
+                <Link key={item.path} to={item.path}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className={`gap-2 text-xs ${active ? "text-primary bg-primary/10 border-b-2 border-primary rounded-b-none" : "text-muted-foreground"}`}
+                  >
+                    <item.icon className="h-4 w-4" />
+                    {item.label}
+                  </Button>
+                </Link>
+              );
+            })}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <LanguageSelector compact />
+
+            <button onClick={toggleDarkMode} className="p-1.5 rounded-md hover:bg-secondary text-muted-foreground">
+              {darkMode ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
+            </button>
+
+            {isAdmin && (
+              <Link to="/admin">
+                <Button variant="ghost" size="sm" className="gap-1.5 text-xs text-destructive">
+                  <Shield className="h-3.5 w-3.5" /> {t("nav.admin")}
                 </Button>
               </Link>
-            );
-          })}
-        </div>
+            )}
 
-        <div className="flex items-center gap-2">
-          <LanguageSelector compact />
+            {/* Upgrade Button */}
+            {showUpgrade && (
+              <Button
+                variant="gold"
+                size="sm"
+                className="gap-1.5 text-xs"
+                onClick={() => setShowUpgradeModal(true)}
+              >
+                <Crown className="h-3.5 w-3.5" />
+                Upgrade
+              </Button>
+            )}
 
-          <button onClick={toggleDarkMode} className="p-1.5 rounded-md hover:bg-secondary text-muted-foreground">
-            {darkMode ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
-          </button>
-
-          {isAdmin && (
-            <Link to="/admin">
-              <Button variant="ghost" size="sm" className="gap-1.5 text-xs text-destructive">
-                <Shield className="h-3.5 w-3.5" /> {t("nav.admin")}
+            <Link to="/deposit">
+              <Button variant="gold" size="sm" className="gap-2">
+                <Wallet className="h-3.5 w-3.5" />
+                ${totalUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </Button>
             </Link>
-          )}
-
-          <Link to="/deposit">
-            <Button variant="gold" size="sm" className="gap-2">
-              <Wallet className="h-3.5 w-3.5" />
-              ${totalUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            <Button variant="ghost" size="sm" className="gap-2 text-muted-foreground" onClick={handleLogout}>
+              <LogOut className="h-3.5 w-3.5" />
             </Button>
-          </Link>
-          <Button variant="ghost" size="sm" className="gap-2 text-muted-foreground" onClick={handleLogout}>
-            <LogOut className="h-3.5 w-3.5" />
-          </Button>
+          </div>
         </div>
-      </div>
-    </nav>
+      </nav>
+
+      {/* Upgrade Tier Modal */}
+      {showUpgradeModal && (
+        <UpgradeTierModal
+          currentTier={currentTier}
+          onClose={() => setShowUpgradeModal(false)}
+          onUpgraded={handleUpgradeSuccess}
+        />
+      )}
+    </>
   );
 };
 
