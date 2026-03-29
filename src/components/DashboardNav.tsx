@@ -69,12 +69,13 @@ const DashboardNav = () => {
     };
   }, [mobileMenuOpen]);
 
+  // Hardcoded labels (with translation fallback)
   const navItems = [
-    { icon: Home, path: "/dashboard", label: t("nav.dashboard") },
-    { icon: TrendingUp, path: "/markets", label: t("nav.markets") },
-    { icon: ArrowLeftRight, path: "/spot-trading", label: t("nav.trade") },
-    { icon: Bot, path: "/bots", label: t("nav.bots") },
-    { icon: History, path: "/transactions", label: t("nav.history") },
+    { icon: Home, path: "/dashboard", label: t("nav.dashboard", "Dashboard") },
+    { icon: TrendingUp, path: "/markets", label: t("nav.markets", "Markets") },
+    { icon: ArrowLeftRight, path: "/spot-trading", label: t("nav.trade", "Trade") },
+    { icon: Bot, path: "/bots", label: t("nav.bots", "Bots") },
+    { icon: History, path: "/transactions", label: t("nav.history", "History") },
   ];
 
   const totalUsd = wallets.reduce((sum, w) => {
@@ -115,7 +116,7 @@ const DashboardNav = () => {
             </span>
           </Link>
 
-          {/* Desktop Navigation */}
+          {/* Desktop Navigation - ALWAYS VISIBLE on md and up */}
           <div className="hidden md:flex items-center gap-1">
             {navItems.map((item) => {
               const active = location.pathname === item.path;
@@ -131,7 +132,7 @@ const DashboardNav = () => {
                     }`}
                   >
                     <item.icon className="h-4 w-4" />
-                    {item.label}
+                    <span>{item.label}</span>
                   </Button>
                 </Link>
               );
@@ -153,7 +154,7 @@ const DashboardNav = () => {
             {isAdmin && (
               <Link to="/admin">
                 <Button variant="ghost" size="sm" className="gap-1.5 text-xs text-destructive">
-                  <Shield className="h-3.5 w-3.5" /> {t("nav.admin")}
+                  <Shield className="h-3.5 w-3.5" /> {t("nav.admin", "Admin")}
                 </Button>
               </Link>
             )}
@@ -167,7 +168,7 @@ const DashboardNav = () => {
                 onClick={() => setShowUpgradeModal(true)}
               >
                 <Crown className="h-3.5 w-3.5" />
-                Upgrade
+                <span>{t("upgrade", "Upgrade")}</span>
               </Button>
             )}
 
@@ -175,7 +176,7 @@ const DashboardNav = () => {
             <Link to="/deposit">
               <Button variant="gold" size="sm" className="gap-2">
                 <Wallet className="h-3.5 w-3.5" />
-                ${totalUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                <span>${totalUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </Button>
             </Link>
 
@@ -247,7 +248,7 @@ const DashboardNav = () => {
                   onClick={closeMobileMenu}
                 >
                   <item.icon className="h-5 w-5" />
-                  {item.label}
+                  <span>{item.label}</span>
                 </Link>
               );
             })}
@@ -265,7 +266,7 @@ const DashboardNav = () => {
                 }}
               >
                 <Crown className="h-4 w-4" />
-                Upgrade Tier
+                <span>{t("upgrade", "Upgrade Tier")}</span>
               </Button>
             )}
             <Button
@@ -277,7 +278,7 @@ const DashboardNav = () => {
               }}
             >
               <LogOut className="h-4 w-4" />
-              Sign Out
+              <span>{t("signOut", "Sign Out")}</span>
             </Button>
           </div>
         </div>
