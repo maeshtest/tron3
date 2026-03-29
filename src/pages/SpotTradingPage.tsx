@@ -321,6 +321,15 @@ const SpotTradingPage = () => {
           `${side === "buy" ? "Bought" : "Sold"} ${amt.toFixed(8)} ${symbol} at ${sym}${effectivePrice.toLocaleString()}`
         );
       }
+      // Emit trade popup
+      emitTradeAlert({
+        id: `spot-${Date.now()}`,
+        side: side as "buy" | "sell",
+        symbol: symbol || "BTC",
+        price: effectivePrice,
+        amount: amt,
+        timestamp: Date.now(),
+      });
       setAmount("");
       if (orderType === "limit") setLimitPrice("");
     } catch (err: any) {
