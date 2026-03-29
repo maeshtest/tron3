@@ -321,6 +321,7 @@ export type Database = {
       }
       profiles: {
         Row: {
+          account_tier: string
           avatar_url: string | null
           country: string | null
           created_at: string
@@ -335,6 +336,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          account_tier?: string
           avatar_url?: string | null
           country?: string | null
           created_at?: string
@@ -349,6 +351,7 @@ export type Database = {
           user_id: string
         }
         Update: {
+          account_tier?: string
           avatar_url?: string | null
           country?: string | null
           created_at?: string

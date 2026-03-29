@@ -1,6 +1,7 @@
 import DashboardLayout from "@/components/DashboardLayout";
 import DemoModeBanner from "@/components/DemoModeBanner";
 import DemoModeToggle from "@/components/DemoModeToggle";
+import TradePopup, { emitTradeAlert } from "@/components/TradePopup";
 import { Button } from "@/components/ui/button";
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -320,6 +321,15 @@ const SpotTradingPage = () => {
           `${side === "buy" ? "Bought" : "Sold"} ${amt.toFixed(8)} ${symbol} at ${sym}${effectivePrice.toLocaleString()}`
         );
       }
+      // Emit trade popup
+      emitTradeAlert({
+        id: `spot-${Date.now()}`,
+        side: side as "buy" | "sell",
+        symbol: symbol || "BTC",
+        price: effectivePrice,
+        amount: amt,
+        timestamp: Date.now(),
+      });
       setAmount("");
       if (orderType === "limit") setLimitPrice("");
     } catch (err: any) {
@@ -331,6 +341,7 @@ const SpotTradingPage = () => {
 
   return (
     <DashboardLayout>
+      <TradePopup />
       <DemoModeBanner />
       <div className="p-0">
         {/* Pair selector header */}

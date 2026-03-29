@@ -8,12 +8,14 @@ import { useCryptoPrices } from "@/hooks/useCryptoPrices";
 import { useProfile } from "@/hooks/useProfile";
 import TronnlixLogo from "@/components/TronnlixLogo";
 import LanguageSelector from "@/components/LanguageSelector";
+import AccountTierBadge from "@/components/AccountTierBadge";
+import UpgradeTierModal from "@/components/UpgradeTierModal";
 import { Button } from "@/components/ui/button";
 import {
   LayoutDashboard, Wallet, Banknote, Users, TrendingUp, CandlestickChart,
   Bot, Coins, Gift, ArrowRightLeft, ArrowDownToLine, History, CreditCard,
   ShieldCheck, Lock, HelpCircle, LogOut, Sun, Moon, Shield, ChevronLeft,
-  ChevronRight, Menu, X, User
+  ChevronRight, Menu, X, User, BadgeCheck, ArrowUp
 } from "lucide-react";
 
 const sections = [
@@ -66,6 +68,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const { profile } = useProfile();
   const [collapsed, setCollapsed] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [showUpgrade, setShowUpgrade] = useState(false);
+  const accountTier = (profile as any)?.account_tier || "free";
+  const kycVerified = profile?.kyc_status === "verified";
 
   const totalUsd = wallets.reduce((sum, w) => {
     const price = w.crypto_id === "usdt" ? 1 : (prices.find(p => p.id === w.crypto_id)?.current_price ?? 0);
@@ -101,9 +106,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <User className="h-4 w-4 text-primary" />
               )}
             </div>
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-foreground truncate">{profile?.display_name || user?.email?.split("@")[0] || "User"}</p>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5">
+                <p className="text-sm font-semibold text-foreground truncate">{profile?.display_name || user?.email?.split("@")[0] || "User"}</p>
+                {kycVerified && <BadgeCheck className="h-3.5 w-3.5 text-emerald-400 shrink-0" />}
+              </div>
               <p className="text-[10px] text-muted-foreground truncate">{user?.email}</p>
+              <div className="flex items-center gap-1.5 mt-1">
+                <AccountTierBadge tier={accountTier} compact />
+                {accountTier === "free" && (
+                  <button onClick={() => setShowUpgrade(true)} className="text-[9px] text-primary hover:underline flex items-center gap-0.5">
+                    <ArrowUp className="h-2.5 w-2.5" /> Upgrade
+                  </button>
+                )}
+              </div>
             </div>
           </div>
           <div className="p-3 rounded-xl bg-primary/10 border border-primary/20">
@@ -200,7 +216,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <TronnlixLogo size={24} />
             <span className="text-base font-display font-bold text-foreground">Tronnlix</span>
           </Link>
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-2">
+            <AccountTierBadge tier={accountTier} compact />
             <Link to="/deposit">
               <Button variant="gold" size="sm" className="text-xs gap-1">
                 <Wallet className="h-3 w-3" />${totalUsd.toFixed(2)}
@@ -213,6 +230,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           {children}
         </main>
       </div>
+
+      {/* Upgrade modal */}
+      {showUpgrade && (
+        <UpgradeTierModal
+          currentTier={accountTier}
+          onClose={() => setShowUpgrade(false)}
+          onUpgraded={() => { setShowUpgrade(false); }}
+        />
+      )}
     </div>
   );
 }

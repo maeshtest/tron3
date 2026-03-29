@@ -2,11 +2,13 @@ import DashboardLayout from "@/components/DashboardLayout";
 import BotAnalyticsView from "@/components/BotAnalyticsView";
 import DemoModeBanner from "@/components/DemoModeBanner";
 import DemoModeToggle from "@/components/DemoModeToggle";
+import TradePopup, { emitTradeAlert } from "@/components/TradePopup";
 import { Bot, Search, Zap, Lock, Copy, Users, RotateCw, RefreshCw, Clock, TrendingUp, Activity, BarChart3, ChevronLeft, ChevronDown, ArrowLeft, Info, MessageSquare, Send, X, Wallet, CreditCard } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useCryptoPrices } from "@/hooks/useCryptoPrices";
 import { useAuth } from "@/contexts/AuthContext";
+import { useProfile } from "@/hooks/useProfile";
 import { Button } from "@/components/ui/button";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { toast } from "sonner";
@@ -89,10 +91,12 @@ interface ChatMessage {
 const BotsPage = () => {
   const { getSymbol, prices } = useCryptoPrices();
   const { user } = useAuth();
+  const { profile, refetch: refetchProfile } = useProfile();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { demoMode, demoBalance, setDemoBalance } = useAppStore();
   const { settings } = useSiteSettings();
+  const accountTier = (profile as any)?.account_tier || "free";
   const [mainTab, setMainTab] = useState<"popular" | "ai">("popular");
   const [searchQuery, setSearchQuery] = useState("");
   const [tierFilter, setTierFilter] = useState("All Tiers");
@@ -267,7 +271,7 @@ const BotsPage = () => {
     }
   }, [chatOpen, chatMessages]);
 
-  // Simulated trade generator for running bots
+  // Simulated trade generator for running bots - fast trades, always profit
   useEffect(() => {
     if (!myBots.length) return;
 
@@ -275,19 +279,21 @@ const BotsPage = () => {
       myBots.forEach(async (bot: any) => {
         if (bot.status !== "running") return;
 
-        const price = currentPrice || 60000;
+        const coinPrice = prices.find(p => p.id === bot.crypto_id)?.current_price || currentPrice || 60000;
 
-        // Random realistic movement
-        const change = (Math.random() - 0.5) * 0.02; // ±2%
-        const tradePrice = price * (1 + change);
+        // Small realistic movement
+        const change = (Math.random() - 0.3) * 0.015;
+        const tradePrice = coinPrice * (1 + change);
 
         const stakedAmount = bot.config?.staked_amount || 50;
-        const amount = (stakedAmount / price) * (Math.random() * 0.2 + 0.1);
+        const amount = (stakedAmount / coinPrice) * (Math.random() * 0.15 + 0.05);
 
-        const side = Math.random() > 0.5 ? "buy" : "sell";
+        const side = Math.random() > 0.45 ? "buy" : "sell";
 
-        // Simulated PNL (slightly biased profit)
-        const pnl = (Math.random() - 0.4) * 5;
+        // Always positive PNL (0.1 to 2.5)
+        const pnl = Math.random() * 2.4 + 0.1;
+
+        const symbol = getSymbol(bot.crypto_id);
 
         // Insert trade
         await supabase.from("bot_trades").insert({
@@ -308,11 +314,37 @@ const BotsPage = () => {
             total_trades: (bot.total_trades || 0) + 1,
           })
           .eq("id", bot.id);
+
+        // Add profit to USDT wallet
+        if (!demoMode && user) {
+          const { data: wallet } = await supabase
+            .from("wallets")
+            .select("*")
+            .eq("user_id", user.id)
+            .or("crypto_id.eq.tether,crypto_id.eq.usdt")
+            .limit(1)
+            .maybeSingle();
+          if (wallet) {
+            await supabase.from("wallets").update({ balance: Number(wallet.balance) + pnl }).eq("id", wallet.id);
+          }
+        } else if (demoMode) {
+          setDemoBalance(demoBalance + pnl);
+        }
+
+        // Emit trade popup
+        emitTradeAlert({
+          id: `${bot.id}-${Date.now()}`,
+          side: side as "buy" | "sell",
+          symbol: symbol || "BTC",
+          price: tradePrice,
+          amount,
+          timestamp: Date.now(),
+        });
       });
-    }, 8000); // every 8 sec
+    }, 3000); // every 3 seconds
 
     return () => clearInterval(interval);
-  }, [myBots, currentPrice]);
+  }, [myBots, currentPrice, prices, demoMode, demoBalance, user, getSymbol, setDemoBalance]);
 
   // Stake bot mutation
   const stakeBot = useMutation({
@@ -484,6 +516,11 @@ const BotsPage = () => {
     return tier === "pro" || tier === "elite" || tier === "vip";
   };
 
+  const TIER_RANK: Record<string, number> = { free: 0, pro: 1, elite: 2, vip: 3 };
+  const canAccessTier = (botTier: string) => {
+    return (TIER_RANK[accountTier?.toLowerCase()] || 0) >= (TIER_RANK[botTier?.toLowerCase()] || 0);
+  };
+
   // Prepare data for PNL chart
   const pnlChartData = useMemo(() => {
     if (!userTrades.length) return [];
@@ -533,6 +570,11 @@ const BotsPage = () => {
   }, [chartSymbol]);
 
   const handleSelectBot = (bot: any) => {
+    const botTier = (bot.tier || "free").toLowerCase();
+    if (!canAccessTier(botTier) && !demoMode) {
+      toast.error(`Upgrade to ${botTier.charAt(0).toUpperCase() + botTier.slice(1)} tier to use this bot.`);
+      return;
+    }
     setSelectedBot(bot);
     setSelectedChartPair(bot.crypto_id);
   };
@@ -614,9 +656,18 @@ const BotsPage = () => {
     const roi = calcROI(bot.total_profit, bot.config, bot.created_at);
     const winRate = calcWinRate(bot.total_trades, bot.total_profit);
     const runtime = formatRuntime(bot.created_at);
+    const locked = !canAccessTier(tier) && !demoMode;
 
     return (
-      <div className="bg-card border border-border rounded-xl p-3 sm:p-4 relative overflow-hidden cursor-pointer hover:border-primary/30 transition-colors" onClick={() => handleSelectBot(bot)}>
+      <div className={`bg-card border border-border rounded-xl p-3 sm:p-4 relative overflow-hidden cursor-pointer hover:border-primary/30 transition-colors ${locked ? "opacity-70" : ""}`} onClick={() => handleSelectBot(bot)}>
+        {locked && (
+          <div className="absolute inset-0 bg-background/60 backdrop-blur-[2px] z-10 flex items-center justify-center">
+            <div className="flex flex-col items-center gap-1">
+              <Lock className="h-5 w-5 text-muted-foreground" />
+              <span className="text-[10px] font-bold text-muted-foreground">Upgrade to {tier.charAt(0).toUpperCase() + tier.slice(1)}</span>
+            </div>
+          </div>
+        )}
         <div className="flex items-center gap-1.5 mb-3 flex-wrap">
           <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${TIER_COLORS[tier] || TIER_COLORS.free}`}>{stratLabel}</span>
           <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${TIER_COLORS[tier] || TIER_COLORS.free}`}>{tier.charAt(0).toUpperCase() + tier.slice(1)}</span>
@@ -644,7 +695,7 @@ const BotsPage = () => {
             <Users className="h-3 w-3" /><span>{(bot.bot_users || 0).toLocaleString()} users</span><span className="mx-1">•</span><span>{bot.runs || 0} runs</span>
           </div>
           <Button size="sm" className="text-[11px] h-7 bg-profit hover:bg-profit/80 text-white gap-1" onClick={(e) => { e.stopPropagation(); handleSelectBot(bot); }}>
-            <Copy className="h-3 w-3" /> Copy
+            {locked ? <Lock className="h-3 w-3" /> : <Copy className="h-3 w-3" />} {locked ? "Locked" : "Copy"}
           </Button>
         </div>
       </div>
@@ -851,8 +902,9 @@ const BotsPage = () => {
 
   return (
     <DashboardLayout>
+      <TradePopup />
       <DemoModeBanner />
-      <div className="flex flex-col h-[calc(100vh-4rem)] overflow-hidden">
+      <div className="flex flex-col h-[calc(100vh-3.5rem)] md:h-[calc(100vh-0px)] overflow-hidden">
         {/* Top nav bar */}
         <div className="flex items-center gap-4 px-4 py-2 border-b border-border bg-card text-sm overflow-x-auto whitespace-nowrap">
           <Link to="/dashboard" className="flex items-center gap-1 text-muted-foreground hover:text-foreground">

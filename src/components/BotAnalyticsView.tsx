@@ -54,19 +54,19 @@ export default function BotAnalyticsView({ bot, onBack, onUnstake, unstaking }: 
   const returnAmount = stakedAmount + profit;
   const signalCode = generateSignalCode(bot.id);
 
-  // Timer that counts up from bot start, resets every ~3 min cycle
+  // Timer that counts up from bot start, resets every ~60s cycle (fast)
   useEffect(() => {
     const interval = setInterval(() => {
       const totalSec = Math.floor((Date.now() - new Date(bot.created_at).getTime()) / 1000);
-      const cycleSec = totalSec % 180; // 3 minute cycle
+      const cycleSec = totalSec % 60; // 60 second cycle
       setElapsed(cycleSec);
-      setBotPhase(cycleSec < 90 ? "buying" : "selling");
+      setBotPhase(cycleSec < 30 ? "buying" : "selling");
     }, 1000);
     return () => clearInterval(interval);
   }, [bot.created_at]);
 
-  const timerDisplay = `${Math.floor((180 - (elapsed % 180)) / 60)}:${String((180 - (elapsed % 180)) % 60).padStart(2, "0")}`;
-  const progressPercent = ((elapsed % 180) / 180) * 100;
+  const timerDisplay = `${Math.floor((60 - (elapsed % 60)) / 60)}:${String((60 - (elapsed % 60)) % 60).padStart(2, "0")}`;
+  const progressPercent = ((elapsed % 60) / 60) * 100;
 
   // Filter pairs for switching
   const filteredPairs = useMemo(() => {

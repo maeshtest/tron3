@@ -1,6 +1,7 @@
 import DashboardLayout from "@/components/DashboardLayout";
 import DemoModeBanner from "@/components/DemoModeBanner";
 import DemoModeToggle from "@/components/DemoModeToggle";
+import TradePopup, { emitTradeAlert } from "@/components/TradePopup";
 import { Button } from "@/components/ui/button";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -228,6 +229,15 @@ const FuturesPage = () => {
       timestamp: Date.now(),
     };
     setPositions(prev => [newPosition, ...prev]);
+    // Emit trade popup
+    emitTradeAlert({
+      id: `futures-${Date.now()}`,
+      side: side === "long" ? "buy" : "sell",
+      symbol: symbol || "BTC",
+      price: effectivePrice,
+      amount: totalPositionSize,
+      timestamp: Date.now(),
+    });
     toast.success(`${demoMode ? "[DEMO] " : ""}${side === "long" ? "Long" : "Short"} position opened: ${totalPositionSize} USDT @ ${effectivePrice} (${leverage}x)`);
     setAmount("");
     if (orderType === "limit") setLimitPrice("");
@@ -257,6 +267,7 @@ const FuturesPage = () => {
 
   return (
     <DashboardLayout>
+      <TradePopup />
       <DemoModeBanner />
       <div className="p-0">
         {/* Header with pair selector */}
