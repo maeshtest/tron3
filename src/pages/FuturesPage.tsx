@@ -258,6 +258,7 @@ const FuturesPage = () => {
 
   return (
     <DashboardLayout>
+      <TradePopup />
       <DemoModeBanner />
       <div className="p-0">
         {/* Header with pair selector */}
