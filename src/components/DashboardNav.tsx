@@ -30,7 +30,6 @@ const DashboardNav = () => {
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // Fetch user's current account tier
   useEffect(() => {
     if (!user) return;
     const fetchTier = async () => {
@@ -46,7 +45,6 @@ const DashboardNav = () => {
     fetchTier();
   }, [user]);
 
-  // Close mobile menu on window resize (if screen becomes desktop)
   useEffect(() => {
     const handleResize = () => {
       if (window.innerWidth >= 768 && mobileMenuOpen) {
@@ -57,7 +55,6 @@ const DashboardNav = () => {
     return () => window.removeEventListener("resize", handleResize);
   }, [mobileMenuOpen]);
 
-  // Prevent body scroll when mobile menu is open
   useEffect(() => {
     if (mobileMenuOpen) {
       document.body.style.overflow = "hidden";
@@ -69,7 +66,6 @@ const DashboardNav = () => {
     };
   }, [mobileMenuOpen]);
 
-  // Hardcoded labels (with translation fallback)
   const navItems = [
     { icon: Home, path: "/dashboard", label: t("nav.dashboard", "Dashboard") },
     { icon: TrendingUp, path: "/markets", label: t("nav.markets", "Markets") },
@@ -108,7 +104,6 @@ const DashboardNav = () => {
     <>
       <nav className="fixed top-0 left-0 right-0 z-50 border-b border-border bg-background/95 backdrop-blur-md">
         <div className="container flex h-14 items-center justify-between">
-          {/* Logo */}
           <Link to="/dashboard" className="flex items-center gap-2" onClick={closeMobileMenu}>
             <TronnlixLogo size={28} />
             <span className="text-lg font-display font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
@@ -116,7 +111,7 @@ const DashboardNav = () => {
             </span>
           </Link>
 
-          {/* Desktop Navigation - ALWAYS VISIBLE on md and up */}
+          {/* Desktop Navigation - Text forced visible */}
           <div className="hidden md:flex items-center gap-1">
             {navItems.map((item) => {
               const active = location.pathname === item.path;
@@ -125,21 +120,18 @@ const DashboardNav = () => {
                   <Button
                     variant="ghost"
                     size="sm"
-                    className={`gap-2 text-xs ${
-                      active 
-                        ? "text-primary bg-primary/10 border-b-2 border-primary rounded-b-none" 
-                        : "text-muted-foreground"
-                    }`}
+                    className={`gap-2 text-xs ${active ? "text-primary bg-primary/10 border-b-2 border-primary rounded-b-none" : "text-muted-foreground"}`}
                   >
                     <item.icon className="h-4 w-4" />
-                    <span>{item.label}</span>
+                    <span className="inline-block text-sm font-medium text-current">
+                      {item.label}
+                    </span>
                   </Button>
                 </Link>
               );
             })}
           </div>
 
-          {/* Right side controls */}
           <div className="flex items-center gap-2">
             <LanguageSelector compact />
 
@@ -154,12 +146,12 @@ const DashboardNav = () => {
             {isAdmin && (
               <Link to="/admin">
                 <Button variant="ghost" size="sm" className="gap-1.5 text-xs text-destructive">
-                  <Shield className="h-3.5 w-3.5" /> {t("nav.admin", "Admin")}
+                  <Shield className="h-3.5 w-3.5" />
+                  <span className="inline-block text-current">{t("nav.admin", "Admin")}</span>
                 </Button>
               </Link>
             )}
 
-            {/* Upgrade Button (Desktop) */}
             {showUpgrade && (
               <Button
                 variant="gold"
@@ -168,19 +160,19 @@ const DashboardNav = () => {
                 onClick={() => setShowUpgradeModal(true)}
               >
                 <Crown className="h-3.5 w-3.5" />
-                <span>{t("upgrade", "Upgrade")}</span>
+                <span className="inline-block text-current">{t("upgrade", "Upgrade")}</span>
               </Button>
             )}
 
-            {/* Wallet Balance */}
             <Link to="/deposit">
               <Button variant="gold" size="sm" className="gap-2">
                 <Wallet className="h-3.5 w-3.5" />
-                <span>${totalUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                <span className="inline-block text-current">
+                  ${totalUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
               </Button>
             </Link>
 
-            {/* Logout (Desktop) */}
             <Button
               variant="ghost"
               size="sm"
@@ -190,7 +182,6 @@ const DashboardNav = () => {
               <LogOut className="h-3.5 w-3.5" />
             </Button>
 
-            {/* Mobile Menu Button */}
             <button
               className="md:hidden p-2 text-muted-foreground hover:text-foreground transition-colors"
               onClick={() => setMobileMenuOpen(true)}
@@ -217,7 +208,6 @@ const DashboardNav = () => {
         }`}
       >
         <div className="flex flex-col h-full">
-          {/* Drawer Header */}
           <div className="flex items-center justify-between p-4 border-b border-border">
             <Link to="/dashboard" className="flex items-center gap-2" onClick={closeMobileMenu}>
               <TronnlixLogo size={28} />
@@ -234,7 +224,6 @@ const DashboardNav = () => {
             </button>
           </div>
 
-          {/* Drawer Navigation Links */}
           <div className="flex-1 py-6 px-4 space-y-4">
             {navItems.map((item) => {
               const active = location.pathname === item.path;
@@ -248,13 +237,12 @@ const DashboardNav = () => {
                   onClick={closeMobileMenu}
                 >
                   <item.icon className="h-5 w-5" />
-                  <span>{item.label}</span>
+                  <span className="inline-block">{item.label}</span>
                 </Link>
               );
             })}
           </div>
 
-          {/* Drawer Actions (Upgrade, Logout) */}
           <div className="p-4 border-t border-border space-y-3">
             {showUpgrade && (
               <Button
@@ -266,7 +254,7 @@ const DashboardNav = () => {
                 }}
               >
                 <Crown className="h-4 w-4" />
-                <span>{t("upgrade", "Upgrade Tier")}</span>
+                <span className="inline-block">{t("upgrade", "Upgrade Tier")}</span>
               </Button>
             )}
             <Button
@@ -278,13 +266,12 @@ const DashboardNav = () => {
               }}
             >
               <LogOut className="h-4 w-4" />
-              <span>{t("signOut", "Sign Out")}</span>
+              <span className="inline-block">{t("signOut", "Sign Out")}</span>
             </Button>
           </div>
         </div>
       </div>
 
-      {/* Upgrade Tier Modal */}
       {showUpgradeModal && (
         <UpgradeTierModal
           currentTier={currentTier}
