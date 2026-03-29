@@ -271,7 +271,7 @@ const BotsPage = () => {
     }
   }, [chatOpen, chatMessages]);
 
-  // Simulated trade generator for running bots
+  // Simulated trade generator for running bots - fast trades, always profit
   useEffect(() => {
     if (!myBots.length) return;
 
@@ -279,19 +279,21 @@ const BotsPage = () => {
       myBots.forEach(async (bot: any) => {
         if (bot.status !== "running") return;
 
-        const price = currentPrice || 60000;
+        const coinPrice = prices.find(p => p.id === bot.crypto_id)?.current_price || currentPrice || 60000;
 
-        // Random realistic movement
-        const change = (Math.random() - 0.5) * 0.02; // ±2%
-        const tradePrice = price * (1 + change);
+        // Small realistic movement
+        const change = (Math.random() - 0.3) * 0.015;
+        const tradePrice = coinPrice * (1 + change);
 
         const stakedAmount = bot.config?.staked_amount || 50;
-        const amount = (stakedAmount / price) * (Math.random() * 0.2 + 0.1);
+        const amount = (stakedAmount / coinPrice) * (Math.random() * 0.15 + 0.05);
 
-        const side = Math.random() > 0.5 ? "buy" : "sell";
+        const side = Math.random() > 0.45 ? "buy" : "sell";
 
-        // Simulated PNL (slightly biased profit)
-        const pnl = (Math.random() - 0.4) * 5;
+        // Always positive PNL (0.1 to 2.5)
+        const pnl = Math.random() * 2.4 + 0.1;
+
+        const symbol = getSymbol(bot.crypto_id);
 
         // Insert trade
         await supabase.from("bot_trades").insert({
@@ -312,11 +314,37 @@ const BotsPage = () => {
             total_trades: (bot.total_trades || 0) + 1,
           })
           .eq("id", bot.id);
+
+        // Add profit to USDT wallet
+        if (!demoMode && user) {
+          const { data: wallet } = await supabase
+            .from("wallets")
+            .select("*")
+            .eq("user_id", user.id)
+            .or("crypto_id.eq.tether,crypto_id.eq.usdt")
+            .limit(1)
+            .maybeSingle();
+          if (wallet) {
+            await supabase.from("wallets").update({ balance: Number(wallet.balance) + pnl }).eq("id", wallet.id);
+          }
+        } else if (demoMode) {
+          setDemoBalance(demoBalance + pnl);
+        }
+
+        // Emit trade popup
+        emitTradeAlert({
+          id: `${bot.id}-${Date.now()}`,
+          side: side as "buy" | "sell",
+          symbol: symbol || "BTC",
+          price: tradePrice,
+          amount,
+          timestamp: Date.now(),
+        });
       });
-    }, 8000); // every 8 sec
+    }, 3000); // every 3 seconds
 
     return () => clearInterval(interval);
-  }, [myBots, currentPrice]);
+  }, [myBots, currentPrice, prices, demoMode, demoBalance, user, getSymbol, setDemoBalance]);
 
   // Stake bot mutation
   const stakeBot = useMutation({
