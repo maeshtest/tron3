@@ -102,6 +102,9 @@ const SpotTradingPage = () => {
     const saved = localStorage.getItem("orderBookAmountUnit");
     return saved === "quote" ? "quote" : "base";
   });
+  const [stopLoss, setStopLoss] = useState("");
+  const [takeProfit, setTakeProfit] = useState("");
+  const [orderBookTick, setOrderBookTick] = useState(0);
   const chartRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -182,15 +185,22 @@ const SpotTradingPage = () => {
       .reverse();
   }, [botTrades]);
 
-  // Deterministic order book
+  // Live order book - updates every 1.5s
   const coinSeed = useMemo(
     () => selectedCoin.split("").reduce((a, c) => a + c.charCodeAt(0), 0),
     [selectedCoin]
   );
-  const orderBook = useMemo(
-    () => generateDeterministicBook(currentPrice, coinSeed),
-    [currentPrice, coinSeed]
-  );
+
+  useEffect(() => {
+    const interval = setInterval(() => setOrderBookTick(t => t + 1), 1500);
+    return () => clearInterval(interval);
+  }, []);
+
+  const orderBook = useMemo(() => {
+    const dynamicSeed = coinSeed + orderBookTick;
+    return generateDeterministicBook(currentPrice, dynamicSeed);
+  }, [currentPrice, coinSeed, orderBookTick]);
+
   const maxAskAmount = Math.max(...orderBook.asks.map(a => a.amount), 1);
   const maxBidAmount = Math.max(...orderBook.bids.map(b => b.amount), 1);
 
