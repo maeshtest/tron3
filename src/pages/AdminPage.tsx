@@ -35,7 +35,7 @@ const ALL_CRYPTOS = [
   { id: "stellar", name: "Stellar", symbol: "XLM" },
 ];
 
-type Tab = "overview" | "transactions" | "wallets" | "bots" | "users" | "settings";
+type Tab = "overview" | "transactions" | "wallets" | "bots" | "users" | "kyc" | "roles" | "settings";
 
 // Helper: format large numbers
 const formatNumber = (num: number) => {
@@ -210,6 +210,8 @@ const AdminPage = () => {
     { key: "wallets", label: "Wallets", icon: CreditCard },
     { key: "bots", label: "Bots", icon: Bot },
     { key: "users", label: "Users", icon: Users },
+    { key: "kyc", label: "KYC", icon: ShieldCheck },
+    { key: "roles", label: "Roles", icon: Shield },
     { key: "settings", label: "Settings", icon: Settings },
   ];
 
