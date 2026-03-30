@@ -57,7 +57,7 @@ const TradeSimulator = ({ prices }: { prices: any[] }) => {
   return (
     <section className="py-12">
       <div className="container">
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center justify-between mb-6 flex-wrap gap-2">
           <div className="flex items-center gap-2">
             <Activity className="h-5 w-5 text-primary" />
             <h2 className="text-xl font-display font-bold text-foreground">Live Trades</h2>
@@ -74,7 +74,8 @@ const TradeSimulator = ({ prices }: { prices: any[] }) => {
           </div>
         </div>
         <div className="bg-card border border-border rounded-xl overflow-hidden">
-          <div className="grid grid-cols-12 gap-4 px-4 py-2.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider border-b border-border">
+          {/* Table Header - hidden on mobile */}
+          <div className="hidden sm:grid grid-cols-12 gap-4 px-4 py-2.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider border-b border-border">
             <div className="col-span-2">Trader</div>
             <div className="col-span-2">Pair</div>
             <div className="col-span-2">Position</div>
@@ -82,34 +83,37 @@ const TradeSimulator = ({ prices }: { prices: any[] }) => {
             <div className="col-span-2 text-right">Amount</div>
             <div className="col-span-2 text-right">Time</div>
           </div>
-          <div className="max-h-[320px] overflow-hidden">
-            {trades.map((t, i) => (
-              <motion.div
-                key={t.id}
-                initial={{ opacity: 0, y: -8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.25 }}
-                className={`grid grid-cols-12 gap-4 px-4 py-2 text-xs border-b border-border/30 ${i === 0 ? "bg-primary/5" : ""}`}
-              >
-                <div className="col-span-2 text-muted-foreground/70 truncate">{t.user}</div>
-                <div className="col-span-2 flex items-center gap-2">
-                  <img src={t.image} alt={t.symbol} className="w-4 h-4 rounded-full" />
-                  <span className="font-medium text-foreground">{t.symbol}/USDT</span>
-                </div>
-                <div className="col-span-2">
-                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${t.side === "buy" ? "bg-profit/10 text-profit" : "bg-loss/10 text-loss"}`}>
-                    {t.side === "buy" ? "LONG" : "SHORT"}
-                  </span>
-                </div>
-                <div className={`col-span-2 text-right font-medium tabular-nums ${t.side === "buy" ? "text-profit" : "text-loss"}`}>
-                  ${t.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </div>
-                <div className="col-span-2 text-right text-muted-foreground tabular-nums">{t.amount}</div>
-                <div className="col-span-2 text-right text-muted-foreground tabular-nums">
-                  {t.time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-                </div>
-              </motion.div>
-            ))}
+          {/* Scrollable table body */}
+          <div className="overflow-x-auto max-h-[320px] overflow-y-auto">
+            <div className="min-w-[600px] sm:min-w-full">
+              {trades.map((t, i) => (
+                <motion.div
+                  key={t.id}
+                  initial={{ opacity: 0, y: -8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.25 }}
+                  className={`grid grid-cols-12 gap-4 px-4 py-2 text-xs border-b border-border/30 ${i === 0 ? "bg-primary/5" : ""}`}
+                >
+                  <div className="col-span-2 text-muted-foreground/70 truncate">{t.user}</div>
+                  <div className="col-span-2 flex items-center gap-2">
+                    <img src={t.image} alt={t.symbol} className="w-4 h-4 rounded-full" />
+                    <span className="font-medium text-foreground">{t.symbol}/USDT</span>
+                  </div>
+                  <div className="col-span-2">
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${t.side === "buy" ? "bg-profit/10 text-profit" : "bg-loss/10 text-loss"}`}>
+                      {t.side === "buy" ? "LONG" : "SHORT"}
+                    </span>
+                  </div>
+                  <div className={`col-span-2 text-right font-medium tabular-nums ${t.side === "buy" ? "text-profit" : "text-loss"}`}>
+                    ${t.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </div>
+                  <div className="col-span-2 text-right text-muted-foreground tabular-nums">{t.amount}</div>
+                  <div className="col-span-2 text-right text-muted-foreground tabular-nums">
+                    {t.time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                  </div>
+                </motion.div>
+              ))}
+            </div>
           </div>
         </div>
       </div>
@@ -183,6 +187,20 @@ const Index = () => {
     { icon: Zap, title: "Lightning Fast", desc: "Execute trades in milliseconds with our high-performance matching engine." },
     { icon: Globe, title: "Global Access", desc: "Trade from anywhere in the world with 24/7 support." },
     { icon: BarChart3, title: "Advanced Charts", desc: "Professional trading tools with TradingView integration." },
+  ];
+
+  // Updated wallet icons with reliable CDN URLs
+  const wallets = [
+    { name: "Trust Wallet", logo: "https://trustwallet.com/assets/images/favicon.png" },
+    { name: "SafePal", logo: "https://assets.coingecko.com/coins/images/13905/small/sfp.png" },
+    { name: "Binance", logo: "https://assets.coingecko.com/coins/images/825/small/bnb-icon2_2x.png" },
+    { name: "Bybit", logo: "https://assets.coingecko.com/markets/images/698/small/bybit_spot.png" },
+    { name: "OKX", logo: "https://assets.coingecko.com/markets/images/96/small/WeChat_Image_20220117220452.png" },
+    { name: "Coinbase", logo: "https://assets.coingecko.com/markets/images/23/small/Coinbase_Coin_Primary.png" },
+    { name: "Bitget", logo: "https://assets.coingecko.com/markets/images/540/small/Bitget.png" },
+    { name: "Exodus", logo: "https://assets.coingecko.com/coins/images/33498/small/Exodus-Logo-200px.png" },
+    { name: "MetaMask", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/3/36/MetaMask_Fox.svg/200px-MetaMask_Fox.svg.png" },
+    { name: "Phantom", logo: "https://assets.coingecko.com/coins/images/22984/small/Phantom-Icon_Purple_rounded.png" },
   ];
 
   return (
@@ -509,18 +527,7 @@ const Index = () => {
           </h2>
           <p className="text-muted-foreground mb-8 text-sm">Connect your favorite wallet and start trading</p>
           <div className="flex flex-wrap justify-center gap-6 md:gap-8 max-w-2xl mx-auto">
-            {[
-              { name: "Trust Wallet", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/7/78/Trust_Wallet_Token_%28TWT%29_Logo.svg/200px-Trust_Wallet_Token_%28TWT%29_Logo.svg.png" },
-              { name: "SafePal", logo: "https://assets.coingecko.com/coins/images/13905/small/sfp.png" },
-              { name: "Binance", logo: "https://assets.coingecko.com/coins/images/825/small/bnb-icon2_2x.png" },
-              { name: "Bybit", logo: "https://assets.coingecko.com/markets/images/698/small/bybit_spot.png" },
-              { name: "OKX", logo: "https://assets.coingecko.com/markets/images/96/small/WeChat_Image_20220117220452.png" },
-              { name: "Coinbase", logo: "https://assets.coingecko.com/markets/images/23/small/Coinbase_Coin_Primary.png" },
-              { name: "Bitget", logo: "https://assets.coingecko.com/markets/images/540/small/Bitget.png" },
-              { name: "Exodus", logo: "https://assets.coingecko.com/coins/images/33498/small/Exodus-Logo-200px.png" },
-              { name: "MetaMask", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/3/36/MetaMask_Fox.svg/200px-MetaMask_Fox.svg.png" },
-              { name: "Phantom", logo: "https://assets.coingecko.com/coins/images/22984/small/Phantom-Icon_Purple_rounded.png" },
-            ].map(w => (
+            {wallets.map(w => (
               <div key={w.name} className="flex flex-col items-center gap-2 group">
                 <div className="w-14 h-14 rounded-xl bg-secondary border border-border flex items-center justify-center overflow-hidden hover:border-primary/40 transition-all group-hover:scale-105">
                   <img src={w.logo} alt={w.name} className="w-8 h-8 object-contain" loading="lazy" />
