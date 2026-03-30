@@ -692,7 +692,16 @@ const AdminPage = () => {
           </div>
         )}
 
-        {/* SETTINGS */}
+        {/* KYC MANAGEMENT */}
+        {tab === "kyc" && (
+          <KYCManagementTab inputClass={inputClass} />
+        )}
+
+        {/* ROLES MANAGEMENT */}
+        {tab === "roles" && (
+          <RolesManagementTab inputClass={inputClass} />
+        )}
+
         {tab === "settings" && (
           <div className="space-y-6">
             <div className="flex items-center justify-between">
