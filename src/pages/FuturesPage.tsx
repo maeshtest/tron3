@@ -455,24 +455,13 @@ const FuturesPage = () => {
 
             {/* Order Form */}
             <div className="lg:col-span-3 bg-card border border-border rounded-xl p-3 sm:p-4">
-              {/* Long/Short toggle */}
-              <div className="flex rounded-lg overflow-hidden border border-border mb-4">
-                <button
-                  onClick={() => setSide("long")}
-                  className={`flex-1 py-2.5 text-sm font-semibold transition-all ${
-                    side === "long" ? "bg-profit text-white" : "bg-card text-muted-foreground hover:bg-secondary"
-                  }`}
-                >
-                  Long
-                </button>
-                <button
-                  onClick={() => setSide("short")}
-                  className={`flex-1 py-2.5 text-sm font-semibold transition-all ${
-                    side === "short" ? "bg-loss text-white" : "bg-card text-muted-foreground hover:bg-secondary"
-                  }`}
-                >
-                  Short
-                </button>
+              {/* Cross / Isolated + Leverage */}
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex gap-1">
+                  <button className="text-[10px] px-2 py-1 rounded bg-primary/10 text-primary font-medium">Cross</button>
+                  <button className="text-[10px] px-2 py-1 rounded text-muted-foreground hover:text-foreground">Isolated</button>
+                </div>
+                <span className="text-xs font-bold text-primary">{leverage}x</span>
               </div>
 
               {/* Market/Limit/Stop Limit */}
