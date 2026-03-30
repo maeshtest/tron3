@@ -1,5 +1,6 @@
 import DashboardLayout from "@/components/DashboardLayout";
 import BotAnalyticsView from "@/components/BotAnalyticsView";
+import BotStopSummary from "@/components/BotStopSummary";
 import DemoModeBanner from "@/components/DemoModeBanner";
 import DemoModeToggle from "@/components/DemoModeToggle";
 import TradePopup, { emitTradeAlert } from "@/components/TradePopup";
@@ -116,6 +117,7 @@ const BotsPage = () => {
   const [chatOpen, setChatOpen] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const [botChatEnabled, setBotChatEnabled] = useState(true);
+  const [stopSummary, setStopSummary] = useState<any>(null);
 
   // Data queries (unchanged)
   const { data: usdtWallet, refetch: refetchWallet } = useQuery({
@@ -210,7 +212,7 @@ const BotsPage = () => {
       const side = lastTrade.side === "buy" ? "Long 🔼" : "Short 🔽";
       const pnl = lastTrade.pnl ? (lastTrade.pnl > 0 ? `+$${lastTrade.pnl.toFixed(2)}` : `-$${Math.abs(lastTrade.pnl).toFixed(2)}`) : "";
       const messageText = `🤖 **Bot Trade** | ${symbol}/USDT ${side} at $${Number(lastTrade.price).toFixed(2)} | Amount: ${Number(lastTrade.amount).toFixed(4)} | PnL: ${pnl}`;
-      setChatMessages(prev => [{ id: lastTrade.id, text: messageText, timestamp: new Date(lastTrade.created_at), type: "bot" }, ...prev].slice(0, 150));
+      setChatMessages(prev => [{ id: lastTrade.id, text: messageText, timestamp: new Date(lastTrade.created_at), type: "bot" as const }, ...prev].slice(0, 150));
     }
   }, [publicTrades, getSymbol, botChatEnabled, chatMessages]);
 
@@ -243,7 +245,7 @@ const BotsPage = () => {
         } else if (demoMode) setDemoBalance(demoBalance + pnl);
         emitTradeAlert({ id: `${bot.id}-${Date.now()}`, side: side as "buy" | "sell", symbol: symbol || "BTC", price: tradePrice, amount, timestamp: Date.now() });
         if (botChatEnabled && Math.random() < 0.3) {
-          setChatMessages(prev => [{ id: `bot-${Date.now()}`, text: `🤖 ${bot.name} executed ${side === "buy" ? "LONG" : "SHORT"} on ${symbol}/USDT. Profit: $${pnl.toFixed(2)} 🚀`, timestamp: new Date(), type: "bot" }, ...prev].slice(0, 150));
+          setChatMessages(prev => [{ id: `bot-${Date.now()}`, text: `🤖 ${bot.name} executed ${side === "buy" ? "LONG" : "SHORT"} on ${symbol}/USDT. Profit: $${pnl.toFixed(2)} 🚀`, timestamp: new Date(), type: "bot" as const }, ...prev].slice(0, 150));
         }
       });
     }, 3000);
@@ -288,7 +290,23 @@ const BotsPage = () => {
       else await supabase.from("wallets").insert({ user_id: user.id, crypto_id: "usdt", balance: returnAmount });
       await supabase.from("ledger_entries").insert({ user_id: user.id, crypto_id: "usdt", amount: returnAmount, entry_type: "bot_unstake", description: `Unstaked $${stakedAmount.toFixed(2)} + $${profit.toFixed(2)} profit from ${bot.name}` } as any);
       await supabase.from("trading_bots").delete().eq("id", bot.id);
-      setChatMessages(prev => [{ id: Date.now().toString(), text: `🛑 Unstaked ${bot.name}. Returned $${returnAmount.toFixed(2)} USDT.`, timestamp: new Date(), type: "system" }, ...prev]);
+      setChatMessages(prev => [{ id: Date.now().toString(), text: `🛑 Unstaked ${bot.name}. Returned $${returnAmount.toFixed(2)} USDT.`, timestamp: new Date(), type: "system" as const }, ...prev]);
+      // Show stop summary
+      const ms = Date.now() - new Date(bot.created_at).getTime();
+      const days = Math.floor(ms / 86400000);
+      const hours = Math.floor((ms % 86400000) / 3600000);
+      const mins = Math.floor((ms % 3600000) / 60000);
+      const duration = days > 0 ? `${days}d ${hours}h ${mins}m` : hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+      setStopSummary({
+        botName: bot.name,
+        pair: `${getSymbol(bot.crypto_id)}/USDT`,
+        strategy: STRATEGY_LABELS[bot.strategy] || bot.strategy,
+        stakedAmount,
+        profit,
+        duration,
+        totalTrades: bot.total_trades || 0,
+        winRate: calcWinRate(bot.total_trades || 0, profit),
+      });
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["my_bots"] }); queryClient.invalidateQueries({ queryKey: ["usdt_wallet"] }); toast.success("Bot stopped & funds returned!"); },
     onError: (err: any) => toast.error(err.message),
@@ -601,6 +619,12 @@ const BotsPage = () => {
           </div>
         )}
       </div>
+      {stopSummary && (
+        <BotStopSummary
+          {...stopSummary}
+          onClose={() => setStopSummary(null)}
+        />
+      )}
     </DashboardLayout>
   );
 };
