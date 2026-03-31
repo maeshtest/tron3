@@ -460,7 +460,7 @@ const BotsPage = () => {
           {premium && !demoMode && paymentStep === "pay" ? (<Button className="w-full h-12 bg-primary" onClick={() => { toast.success("Verifying..."); setPaymentStep("monitoring"); setTimeout(() => { stakeBot.mutate({ bot, amount: Number(stakeAmount) || bot.min_stake }); setPaymentStep("info"); }, 3000); }}><CreditCard className="mr-2" /> I've Paid</Button>) :
           premium && !demoMode && paymentStep === "monitoring" ? (<Button disabled><RefreshCw className="animate-spin mr-2" /> Verifying</Button>) :
           premium && !demoMode ? (<Button className="w-full h-12 bg-profit" disabled={amount < bot.min_stake} onClick={() => setPaymentStep("pay")}>{amount >= bot.min_stake ? `Pay $${amount.toFixed(2)}` : "Enter amount"}</Button>) :
-          (<Button className="w-full h-12 bg-profit" disabled={!canStake || stakeBot.isPending} onClick={() => stakeBot.mutate({ bot, amount })}>{stakeBot.isPending ? "Processing..." : "Start Bot"}</Button>)}
+          (<Button className="w-full h-12 bg-profit hover:bg-profit/90 text-white font-bold text-base" disabled={!canStake || stakeBot.isPending} onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (canStake && !stakeBot.isPending) stakeBot.mutate({ bot, amount }); }}>{stakeBot.isPending ? "Processing..." : canStake ? `Start Bot — $${amount.toFixed(2)}` : amount > 0 ? "Amount too low" : "Enter amount"}</Button>)}
           <p className="text-[10px] text-center mt-2">By clicking, you agree to terms.</p>
         </div>
       </div>
