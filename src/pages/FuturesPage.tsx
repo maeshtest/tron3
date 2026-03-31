@@ -11,21 +11,19 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { ChevronDown, ArrowUpDown } from "lucide-react";
 import { useAppStore } from "@/stores/useAppStore";
+import { useTranslation } from "react-i18next";
 
-// List of tradeable pairs
 const TRADEABLE = [
   "bitcoin", "ethereum", "solana", "binancecoin", "ripple",
   "cardano", "polkadot", "dogecoin", "avalanche-2", "chainlink",
   "litecoin", "tron", "stellar"
 ] as const;
 
-// Helper: deterministic pseudo‑random
 function seededRandom(seed: number) {
   const x = Math.sin(seed) * 10000;
   return x - Math.floor(x);
 }
 
-// Helper: generate deterministic order book for a given price and coin seed
 function generateDeterministicBook(price: number, coinSeed: number) {
   if (!price) return { asks: [], bids: [] };
   const asks = Array.from({ length: 10 }, (_, i) => {
@@ -55,24 +53,36 @@ interface Position {
   symbol: string;
   side: "long" | "short";
   entryPrice: number;
-  amount: number;        // position size in quote currency (USDT)
+  amount: number;
   leverage: number;
-  margin: number;        // amount / leverage
+  margin: number;
   liquidationPrice: number;
   timestamp: number;
+  trailingStop?: number;
+  trailingActivation?: number;
+  tp1?: number;
+  tp2?: number;
+  tp2Percent?: number;
+  stopLoss?: number;
+  tp1Hit?: boolean;
 }
 
 const FuturesPage = () => {
+  const { t } = useTranslation();
   const [searchParams] = useSearchParams();
   const [selectedCoin, setSelectedCoin] = useState(searchParams.get("coin") || "bitcoin");
   const [side, setSide] = useState<"long" | "short">("long");
-  const [orderType, setOrderType] = useState<"market" | "limit" | "stop_limit">("market");
+  const [orderType, setOrderType] = useState<"market" | "limit" | "stop_limit" | "trailing_stop">("market");
   const [amount, setAmount] = useState("");
   const [leverage, setLeverage] = useState(10);
   const [limitPrice, setLimitPrice] = useState("");
   const [stopPrice, setStopPrice] = useState("");
   const [takeProfit, setTakeProfit] = useState("");
+  const [takeProfit2, setTakeProfit2] = useState("");
+  const [tp2Percent, setTp2Percent] = useState("50");
   const [stopLoss, setStopLoss] = useState("");
+  const [trailingPercent, setTrailingPercent] = useState("1");
+  const [trailingActivation, setTrailingActivation] = useState("");
   const [pairDropdownOpen, setPairDropdownOpen] = useState(false);
   const [pairSearch, setPairSearch] = useState("");
   const [positions, setPositions] = useState<Position[]>([]);
@@ -94,26 +104,19 @@ const FuturesPage = () => {
   const symbol = getSymbol(selectedCoin);
   const pairName = `${symbol}/USDT`;
 
-  // Effective price for limit orders
-  const effectivePrice = orderType === "limit" ? Number(limitPrice) || currentPrice : currentPrice;
-  const margin = Number(amount) / leverage;   // USDT margin required
-  const totalPositionSize = Number(amount);    // position size in USDT
+  const effectivePrice = orderType === "limit" || orderType === "stop_limit" ? Number(limitPrice) || currentPrice : currentPrice;
+  const margin = Number(amount) / leverage;
+  const totalPositionSize = Number(amount);
 
-  // Calculate liquidation price
   const liquidationPrice = useMemo(() => {
     if (!effectivePrice || leverage <= 0) return 0;
-    if (side === "long") {
-      return effectivePrice * (1 - 1 / leverage);
-    } else {
-      return effectivePrice * (1 + 1 / leverage);
-    }
+    if (side === "long") return effectivePrice * (1 - 1 / leverage);
+    return effectivePrice * (1 + 1 / leverage);
   }, [effectivePrice, leverage, side]);
 
-  // USDT balance
   const realUsdtBalance = getBalance("usdt");
   const usdtBalance = demoMode ? demoBalance : realUsdtBalance;
 
-  // Filter pairs for dropdown
   const filteredPairs = useMemo(() => {
     const q = pairSearch.toLowerCase();
     return TRADEABLE.filter(id => {
@@ -123,7 +126,6 @@ const FuturesPage = () => {
     });
   }, [pairSearch, prices]);
 
-  // Close dropdown on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
@@ -134,7 +136,6 @@ const FuturesPage = () => {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  // Live order book - refreshes every 1.5s
   const coinSeed = selectedCoin.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
 
   useEffect(() => {
@@ -149,7 +150,6 @@ const FuturesPage = () => {
   const maxAskAmount = Math.max(...orderBook.asks.map(a => a.amount), 1);
   const maxBidAmount = Math.max(...orderBook.bids.map(b => b.amount), 1);
 
-  // Toggle amount unit and save to localStorage
   const toggleAmountUnit = () => {
     setAmountUnit(prev => {
       const newUnit = prev === "base" ? "quote" : "base";
@@ -158,15 +158,70 @@ const FuturesPage = () => {
     });
   };
 
-  // TradingView chart embedding
+  // Check TP/SL/Trailing for positions
+  useEffect(() => {
+    if (!currentPrice || positions.length === 0) return;
+    setPositions(prev => prev.map(pos => {
+      let pnl = pos.side === "long"
+        ? (currentPrice - pos.entryPrice) / pos.entryPrice * pos.amount
+        : (pos.entryPrice - currentPrice) / pos.entryPrice * pos.amount;
+
+      // TP1 auto-close
+      if (pos.tp1 && !pos.tp1Hit) {
+        const hit = pos.side === "long" ? currentPrice >= pos.tp1 : currentPrice <= pos.tp1;
+        if (hit) {
+          if (pos.tp2) {
+            // Partial close at TP1
+            const closePercent = (100 - (pos.tp2Percent || 50)) / 100;
+            toast.success(`TP1 hit! Closed ${(closePercent * 100).toFixed(0)}% of ${pos.symbol} position`);
+            return { ...pos, tp1Hit: true, amount: pos.amount * (1 - closePercent), margin: pos.margin * (1 - closePercent) };
+          }
+          toast.success(`Take Profit hit for ${pos.symbol}!`);
+          return null as any; // will be filtered
+        }
+      }
+
+      // TP2 auto-close
+      if (pos.tp2 && pos.tp1Hit) {
+        const hit = pos.side === "long" ? currentPrice >= pos.tp2 : currentPrice <= pos.tp2;
+        if (hit) {
+          toast.success(`TP2 hit! Closed remaining ${pos.symbol} position`);
+          return null as any;
+        }
+      }
+
+      // SL auto-close
+      if (pos.stopLoss) {
+        const hit = pos.side === "long" ? currentPrice <= pos.stopLoss : currentPrice >= pos.stopLoss;
+        if (hit) {
+          toast.error(`Stop Loss triggered for ${pos.symbol}!`);
+          return null as any;
+        }
+      }
+
+      // Trailing stop
+      if (pos.trailingStop) {
+        const trailPrice = pos.side === "long"
+          ? currentPrice * (1 - pos.trailingStop / 100)
+          : currentPrice * (1 + pos.trailingStop / 100);
+        // Simple trailing: if price moved favorably then retraced by trailing %
+        if (pos.side === "long" && currentPrice < pos.entryPrice * (1 - pos.trailingStop / 100)) {
+          toast.info(`Trailing stop triggered for ${pos.symbol}`);
+          return null as any;
+        }
+        if (pos.side === "short" && currentPrice > pos.entryPrice * (1 + pos.trailingStop / 100)) {
+          toast.info(`Trailing stop triggered for ${pos.symbol}`);
+          return null as any;
+        }
+      }
+
+      return pos;
+    }).filter(Boolean));
+  }, [currentPrice]);
+
   useEffect(() => {
     if (!chartRef.current || !symbol) return;
-
-    // Clear previous chart
-    while (chartRef.current.firstChild) {
-      chartRef.current.removeChild(chartRef.current.firstChild);
-    }
-
+    while (chartRef.current.firstChild) chartRef.current.removeChild(chartRef.current.firstChild);
     const script = document.createElement("script");
     script.src = "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
     script.type = "text/javascript";
@@ -182,38 +237,18 @@ const FuturesPage = () => {
       allow_symbol_change: false,
       support_host: "https://www.tradingview.com",
     });
-
     chartRef.current.appendChild(script);
-
-    return () => {
-      if (chartRef.current) {
-        chartRef.current.innerHTML = "";
-      }
-    };
+    return () => { if (chartRef.current) chartRef.current.innerHTML = ""; };
   }, [symbol]);
 
-  // Open a position
   const openPosition = async () => {
     const amt = Number(amount);
-    if (!amt || amt <= 0) {
-      toast.error("Enter a valid positive amount (USDT)");
-      return;
-    }
-    if (margin <= 0) {
-      toast.error("Invalid margin calculation");
-      return;
-    }
-    if (margin > usdtBalance) {
-      toast.error(`Insufficient USDT balance. Required: ${sym}${margin.toFixed(2)}`);
-      return;
-    }
-    if (leverage < 1 || leverage > 100) {
-      toast.error("Leverage must be between 1x and 100x");
-      return;
-    }
-    if (orderType === "limit" && (!limitPrice || Number(limitPrice) <= 0)) {
-      toast.error("Enter a valid limit price");
-      return;
+    if (!amt || amt <= 0) { toast.error(t("trading.enterValidAmount") || "Enter a valid positive amount"); return; }
+    if (margin <= 0) { toast.error("Invalid margin"); return; }
+    if (margin > usdtBalance) { toast.error(`Insufficient USDT balance. Required: ${sym}${margin.toFixed(2)}`); return; }
+    if (leverage < 1 || leverage > 100) { toast.error("Leverage must be 1x-100x"); return; }
+    if ((orderType === "limit" || orderType === "stop_limit") && (!limitPrice || Number(limitPrice) <= 0)) {
+      toast.error("Enter a valid price"); return;
     }
 
     if (demoMode) {
@@ -229,7 +264,7 @@ const FuturesPage = () => {
     const newPosition: Position = {
       id: Date.now().toString(),
       pairId: selectedCoin,
-      symbol,
+      symbol: symbol || "",
       side,
       entryPrice: effectivePrice,
       amount: totalPositionSize,
@@ -237,9 +272,14 @@ const FuturesPage = () => {
       margin,
       liquidationPrice,
       timestamp: Date.now(),
+      tp1: Number(takeProfit) || undefined,
+      tp2: Number(takeProfit2) || undefined,
+      tp2Percent: Number(tp2Percent) || 50,
+      stopLoss: Number(stopLoss) || undefined,
+      trailingStop: orderType === "trailing_stop" ? Number(trailingPercent) : undefined,
+      trailingActivation: Number(trailingActivation) || undefined,
     };
     setPositions(prev => [newPosition, ...prev]);
-    // Emit trade popup
     emitTradeAlert({
       id: `futures-${Date.now()}`,
       side: side === "long" ? "buy" : "sell",
@@ -248,27 +288,21 @@ const FuturesPage = () => {
       amount: totalPositionSize,
       timestamp: Date.now(),
     });
-    toast.success(`${demoMode ? "[DEMO] " : ""}${side === "long" ? "Long" : "Short"} position opened: ${totalPositionSize} USDT @ ${effectivePrice} (${leverage}x)`);
+    toast.success(`${demoMode ? "[DEMO] " : ""}${side === "long" ? "Long" : "Short"} opened: ${totalPositionSize} USDT @ ${effectivePrice} (${leverage}x)`);
     setAmount("");
-    if (orderType === "limit") setLimitPrice("");
+    if (orderType === "limit" || orderType === "stop_limit") setLimitPrice("");
   };
 
-  // Close a position
   const closePosition = async (pos: Position) => {
-    let pnl = 0;
-    if (pos.side === "long") {
-      pnl = (currentPrice - pos.entryPrice) / pos.entryPrice * pos.amount;
-    } else {
-      pnl = (pos.entryPrice - currentPrice) / pos.entryPrice * pos.amount;
-    }
+    let pnl = pos.side === "long"
+      ? (currentPrice - pos.entryPrice) / pos.entryPrice * pos.amount
+      : (pos.entryPrice - currentPrice) / pos.entryPrice * pos.amount;
     if (demoMode) {
       setDemoBalance(demoBalance + pos.margin + pnl);
     } else {
       const finalBalance = realUsdtBalance + pos.margin + pnl;
       const usdtWallet = wallets.find(w => w.crypto_id === "usdt");
-      if (usdtWallet) {
-        await supabase.from("wallets").update({ balance: finalBalance }).eq("id", usdtWallet.id);
-      }
+      if (usdtWallet) await supabase.from("wallets").update({ balance: finalBalance }).eq("id", usdtWallet.id);
       await fetchWallets();
     }
     setPositions(prev => prev.filter(p => p.id !== pos.id));
@@ -282,71 +316,34 @@ const FuturesPage = () => {
       <div className="p-0">
         {/* Header with pair selector */}
         <div className="border-b border-border bg-card sticky top-0 z-10">
-          <div className="container flex flex-wrap items-center gap-2 sm:gap-3 py-2 px-3 sm:px-4">
+          <div className="container flex flex-wrap items-center gap-2 py-2 px-3">
             <DemoModeToggle />
             <div className="relative" ref={dropdownRef}>
-              <button
-                onClick={() => setPairDropdownOpen(!pairDropdownOpen)}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-secondary transition-colors"
-              >
-                {selectedPrice && (
-                  <img src={selectedPrice.image} alt="" className="w-5 h-5 rounded-full" />
-                )}
-                <span className="text-base font-bold text-foreground">{symbol}/USDT</span>
-                <ChevronDown
-                  className={`h-4 w-4 text-muted-foreground transition-transform ${
-                    pairDropdownOpen ? "rotate-180" : ""
-                  }`}
-                />
+              <button onClick={() => setPairDropdownOpen(!pairDropdownOpen)} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-secondary transition-colors">
+                {selectedPrice && <img src={selectedPrice.image} alt="" className="w-5 h-5 rounded-full" />}
+                <span className="text-sm font-bold text-foreground">{symbol}/USDT</span>
+                <ChevronDown className={`h-3 w-3 text-muted-foreground transition-transform ${pairDropdownOpen ? "rotate-180" : ""}`} />
               </button>
-
               {pairDropdownOpen && (
-                <div className="absolute top-full left-0 mt-1 w-72 bg-card border border-border rounded-xl shadow-2xl z-50 overflow-hidden">
+                <div className="absolute top-full left-0 mt-1 w-64 sm:w-72 bg-card border border-border rounded-xl shadow-2xl z-50 overflow-hidden">
                   <div className="p-2">
-                    <input
-                      type="text"
-                      value={pairSearch}
-                      onChange={e => setPairSearch(e.target.value)}
-                      placeholder="Search pairs..."
-                      className="w-full h-8 rounded-lg bg-secondary border border-border px-3 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary"
-                      autoFocus
-                    />
+                    <input type="text" value={pairSearch} onChange={e => setPairSearch(e.target.value)} placeholder={t("common.search") || "Search..."} className="w-full h-8 rounded-lg bg-secondary border border-border px-3 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary" autoFocus />
                   </div>
                   <div className="max-h-64 overflow-y-auto">
                     {filteredPairs.map(id => {
                       const p = prices.find(pr => pr.id === id);
                       if (!p) return null;
                       return (
-                        <button
-                          key={id}
-                          onClick={() => {
-                            setSelectedCoin(id);
-                            setPairDropdownOpen(false);
-                            setPairSearch("");
-                          }}
-                          className={`w-full flex items-center justify-between px-3 py-2 text-xs hover:bg-secondary/80 transition-colors ${
-                            selectedCoin === id ? "bg-primary/10" : ""
-                          }`}
-                        >
+                        <button key={id} onClick={() => { setSelectedCoin(id); setPairDropdownOpen(false); setPairSearch(""); }}
+                          className={`w-full flex items-center justify-between px-3 py-2 text-xs hover:bg-secondary/80 transition-colors ${selectedCoin === id ? "bg-primary/10" : ""}`}>
                           <div className="flex items-center gap-2">
                             <img src={p.image} alt="" className="w-5 h-5 rounded-full" />
-                            <span className="font-medium text-foreground">
-                              {getSymbol(id)}/USDT
-                            </span>
+                            <span className="font-medium text-foreground">{getSymbol(id)}/USDT</span>
                           </div>
                           <div className="text-right">
-                            <span className="text-foreground font-medium">
-                              ${p.current_price.toLocaleString()}
-                            </span>
-                            <span
-                              className={`ml-2 ${
-                                p.price_change_percentage_24h >= 0
-                                  ? "text-profit"
-                                  : "text-loss"
-                              }`}
-                            >
-                              {p.price_change_percentage_24h >= 0 ? "+" : ""}
-                              {p.price_change_percentage_24h.toFixed(2)}%
+                            <span className="text-foreground font-medium">${p.current_price.toLocaleString()}</span>
+                            <span className={`ml-2 ${p.price_change_percentage_24h >= 0 ? "text-profit" : "text-loss"}`}>
+                              {p.price_change_percentage_24h >= 0 ? "+" : ""}{p.price_change_percentage_24h.toFixed(2)}%
                             </span>
                           </div>
                         </button>
@@ -357,95 +354,62 @@ const FuturesPage = () => {
               )}
             </div>
 
-            <div className="flex items-center gap-3">
-              <span className="text-xl font-bold text-foreground tabular-nums">
-                {sym}{currentPrice.toLocaleString()}
-              </span>
+            <div className="flex items-center gap-2">
+              <span className="text-lg sm:text-xl font-bold text-foreground tabular-nums">{sym}{currentPrice.toLocaleString()}</span>
               {selectedPrice && (
-                <span
-                  className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
-                    selectedPrice.price_change_percentage_24h >= 0
-                      ? "bg-profit/10 text-profit"
-                      : "bg-loss/10 text-loss"
-                  }`}
-                >
-                  {selectedPrice.price_change_percentage_24h >= 0 ? "+" : ""}
-                  {selectedPrice.price_change_percentage_24h.toFixed(2)}%
+                <span className={`text-[10px] sm:text-xs font-semibold px-1.5 py-0.5 rounded-full ${selectedPrice.price_change_percentage_24h >= 0 ? "bg-profit/10 text-profit" : "bg-loss/10 text-loss"}`}>
+                  {selectedPrice.price_change_percentage_24h >= 0 ? "+" : ""}{selectedPrice.price_change_percentage_24h.toFixed(2)}%
                 </span>
               )}
             </div>
 
-            <div className="ml-auto text-xs text-muted-foreground">
-              Funding: 0.01%
-            </div>
+            <div className="ml-auto text-[10px] sm:text-xs text-muted-foreground hidden sm:block">Funding: 0.01%</div>
           </div>
         </div>
 
-        <div className="container mt-4 px-2 sm:px-4">
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 sm:gap-4">
+        <div className="container mt-2 sm:mt-4 px-2 sm:px-4">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-2 sm:gap-4">
             {/* Chart */}
             <div className="lg:col-span-6 bg-card border border-border rounded-xl overflow-hidden">
-              <div ref={chartRef} className="h-[280px] sm:h-[400px]" />
+              <div ref={chartRef} className="h-[220px] sm:h-[400px]" />
             </div>
 
-            {/* Order Book */}
-            <div className="hidden md:block lg:col-span-3 bg-card border border-border rounded-xl p-3 sm:p-4 overflow-hidden">
-              <h3 className="text-xs font-semibold text-muted-foreground mb-3 uppercase tracking-wider">
-                Order Book
-              </h3>
+            {/* Order Book - hidden on small screens */}
+            <div className="hidden md:block lg:col-span-3 bg-card border border-border rounded-xl p-3 overflow-hidden">
+              <h3 className="text-xs font-semibold text-muted-foreground mb-3 uppercase tracking-wider">{t("trading.orderBook") || "Order Book"}</h3>
               <div className="flex justify-between text-[10px] text-muted-foreground mb-1.5 px-1">
-                <span>Price ({sym})</span>
-                <button
-                  onClick={toggleAmountUnit}
-                  className="hover:text-primary transition-colors focus:outline-none"
-                >
-                  Amount ({amountUnit === "base" ? symbol : "USDT"})
+                <span>{t("trading.price") || "Price"} ({sym})</span>
+                <button onClick={toggleAmountUnit} className="hover:text-primary transition-colors focus:outline-none">
+                  {t("trading.amount") || "Amount"} ({amountUnit === "base" ? symbol : "USDT"})
                 </button>
-                <span>Total ({sym})</span>
+                <span>{t("trading.total") || "Total"} ({sym})</span>
               </div>
-
-              {/* Asks */}
               <div className="space-y-px mb-1">
                 {orderBook.asks.map((ask, idx) => {
                   const quoteAmount = ask.amount * ask.price;
                   const displayAmount = amountUnit === "base" ? ask.amount : quoteAmount;
                   return (
                     <div key={`ask-${idx}`} className="relative flex justify-between text-xs py-0.5 px-1 rounded-sm">
-                      <div
-                        className="absolute inset-0 bg-loss/5 rounded-sm"
-                        style={{ width: `${(ask.amount / maxAskAmount) * 100}%`, right: 0, left: "auto" }}
-                      />
+                      <div className="absolute inset-0 bg-loss/5 rounded-sm" style={{ width: `${(ask.amount / maxAskAmount) * 100}%`, right: 0, left: "auto" }} />
                       <span className="relative text-loss font-medium tabular-nums">{ask.price.toFixed(2)}</span>
-                      <span className="relative text-muted-foreground tabular-nums">
-                        {displayAmount.toFixed(amountUnit === "base" ? 4 : 2)}
-                      </span>
+                      <span className="relative text-muted-foreground tabular-nums">{displayAmount.toFixed(amountUnit === "base" ? 4 : 2)}</span>
                       <span className="relative text-muted-foreground tabular-nums">{ask.total.toFixed(2)}</span>
                     </div>
                   );
                 })}
               </div>
-
               <div className="py-2 text-center border-y border-border my-1">
-                <span className="text-base font-bold text-foreground tabular-nums">
-                  {sym}{currentPrice.toLocaleString()}
-                </span>
+                <span className="text-base font-bold text-foreground tabular-nums">{sym}{currentPrice.toLocaleString()}</span>
               </div>
-
-              {/* Bids */}
               <div className="space-y-px mt-1">
                 {orderBook.bids.map((bid, idx) => {
                   const quoteAmount = bid.amount * bid.price;
                   const displayAmount = amountUnit === "base" ? bid.amount : quoteAmount;
                   return (
                     <div key={`bid-${idx}`} className="relative flex justify-between text-xs py-0.5 px-1 rounded-sm">
-                      <div
-                        className="absolute inset-0 bg-profit/5 rounded-sm"
-                        style={{ width: `${(bid.amount / maxBidAmount) * 100}%`, right: 0, left: "auto" }}
-                      />
+                      <div className="absolute inset-0 bg-profit/5 rounded-sm" style={{ width: `${(bid.amount / maxBidAmount) * 100}%`, right: 0, left: "auto" }} />
                       <span className="relative text-profit font-medium tabular-nums">{bid.price.toFixed(2)}</span>
-                      <span className="relative text-muted-foreground tabular-nums">
-                        {displayAmount.toFixed(amountUnit === "base" ? 4 : 2)}
-                      </span>
+                      <span className="relative text-muted-foreground tabular-nums">{displayAmount.toFixed(amountUnit === "base" ? 4 : 2)}</span>
                       <span className="relative text-muted-foreground tabular-nums">{bid.total.toFixed(2)}</span>
                     </div>
                   );
@@ -454,8 +418,7 @@ const FuturesPage = () => {
             </div>
 
             {/* Order Form */}
-            <div className="lg:col-span-3 bg-card border border-border rounded-xl p-3 sm:p-4">
-              {/* Cross / Isolated + Leverage */}
+            <div className="lg:col-span-3 bg-card border border-border rounded-xl p-3">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex gap-1">
                   <button className="text-[10px] px-2 py-1 rounded bg-primary/10 text-primary font-medium">Cross</button>
@@ -464,183 +427,126 @@ const FuturesPage = () => {
                 <span className="text-xs font-bold text-primary">{leverage}x</span>
               </div>
 
-              {/* Market/Limit/Stop Limit */}
-              <div className="flex gap-1 mb-4">
-                {(["market", "limit", "stop_limit"] as const).map(t => (
-                  <button
-                    key={t}
-                    onClick={() => setOrderType(t)}
-                    className={`flex-1 text-[10px] py-1.5 rounded-lg transition-all ${
-                      orderType === t ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:text-foreground"
-                    }`}
-                  >
-                    {t === "stop_limit" ? "Stop Limit" : t.charAt(0).toUpperCase() + t.slice(1)}
+              {/* Order type tabs */}
+              <div className="flex gap-1 mb-3 flex-wrap">
+                {(["market", "limit", "stop_limit", "trailing_stop"] as const).map(t2 => (
+                  <button key={t2} onClick={() => setOrderType(t2)}
+                    className={`text-[10px] px-2 py-1.5 rounded-lg transition-all ${orderType === t2 ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:text-foreground"}`}>
+                    {t2 === "stop_limit" ? "Stop Limit" : t2 === "trailing_stop" ? "Trailing" : t2.charAt(0).toUpperCase() + t2.slice(1)}
                   </button>
                 ))}
               </div>
 
-              {/* Available */}
-              <div className="flex justify-between text-[11px] text-muted-foreground mb-3">
-                <span>Avail.</span>
+              <div className="flex justify-between text-[11px] text-muted-foreground mb-2">
+                <span>{t("trading.available") || "Avail."}</span>
                 <span>{sym}{usdtBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })} USDT</span>
               </div>
 
-              <div className="space-y-2.5">
+              <div className="space-y-2">
                 {/* Leverage Slider */}
                 <div>
                   <div className="flex justify-between text-xs text-muted-foreground mb-1">
                     <span>Leverage</span>
                     <span className="font-bold text-foreground">{leverage}x</span>
                   </div>
-                  <input
-                    type="range"
-                    min={1}
-                    max={100}
-                    value={leverage}
-                    onChange={e => setLeverage(Number(e.target.value))}
-                    className="w-full accent-primary"
-                  />
+                  <input type="range" min={1} max={100} value={leverage} onChange={e => setLeverage(Number(e.target.value))} className="w-full accent-primary" />
                   <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
                     <span>1x</span><span>25x</span><span>50x</span><span>100x</span>
                   </div>
                 </div>
 
-                {/* Stop Price (for stop limit) */}
+                {/* Trailing Stop options */}
+                {orderType === "trailing_stop" && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[10px] text-muted-foreground mb-1">Trail %</label>
+                      <input type="number" value={trailingPercent} onChange={e => setTrailingPercent(e.target.value)} placeholder="1.0" className="w-full h-8 rounded-lg bg-secondary border border-border px-2 text-xs text-foreground focus:outline-none focus:border-primary" step="0.1" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-muted-foreground mb-1">Activation</label>
+                      <input type="number" value={trailingActivation} onChange={e => setTrailingActivation(e.target.value)} placeholder="Optional" className="w-full h-8 rounded-lg bg-secondary border border-border px-2 text-xs text-foreground focus:outline-none focus:border-primary" step="any" />
+                    </div>
+                  </div>
+                )}
+
                 {orderType === "stop_limit" && (
                   <div>
                     <label className="block text-xs text-muted-foreground mb-1">Stop Price ({sym})</label>
-                    <input
-                      type="number"
-                      value={stopPrice}
-                      onChange={e => setStopPrice(e.target.value)}
-                      placeholder="Trigger price"
-                      className="w-full h-9 rounded-lg bg-secondary border border-border px-3 text-sm text-foreground focus:outline-none focus:border-primary"
-                      step="any"
-                    />
+                    <input type="number" value={stopPrice} onChange={e => setStopPrice(e.target.value)} placeholder="Trigger price" className="w-full h-9 rounded-lg bg-secondary border border-border px-3 text-sm text-foreground focus:outline-none focus:border-primary" step="any" />
                   </div>
                 )}
 
                 {(orderType === "limit" || orderType === "stop_limit") && (
                   <div>
-                    <label className="block text-xs text-muted-foreground mb-1">Price ({sym})</label>
+                    <label className="block text-xs text-muted-foreground mb-1">{t("trading.price") || "Price"} ({sym})</label>
                     <div className="relative">
-                      <input
-                        type="number"
-                        value={limitPrice}
-                        onChange={e => setLimitPrice(e.target.value)}
-                        placeholder={currentPrice.toString()}
-                        className="w-full h-9 rounded-lg bg-secondary border border-border px-3 pr-14 text-sm text-foreground focus:outline-none focus:border-primary"
-                        step="any"
-                      />
+                      <input type="number" value={limitPrice} onChange={e => setLimitPrice(e.target.value)} placeholder={currentPrice.toString()} className="w-full h-9 rounded-lg bg-secondary border border-border px-3 pr-14 text-sm text-foreground focus:outline-none focus:border-primary" step="any" />
                       <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">USDT</span>
                     </div>
                   </div>
                 )}
 
-                {/* Amount (USDT) */}
+                {/* Size */}
                 <div>
                   <label className="block text-xs text-muted-foreground mb-1">Size (USDT)</label>
                   <div className="relative">
-                    <input
-                      type="number"
-                      value={amount}
-                      onChange={e => setAmount(e.target.value)}
-                      placeholder="0.00"
-                      className="w-full h-9 rounded-lg bg-secondary border border-border px-3 pr-14 text-sm text-foreground focus:outline-none focus:border-primary"
-                      step="any"
-                    />
+                    <input type="number" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00" className="w-full h-9 rounded-lg bg-secondary border border-border px-3 pr-14 text-sm text-foreground focus:outline-none focus:border-primary" step="any" inputMode="decimal" />
                     <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">USDT</span>
                   </div>
                   <div className="flex gap-1 mt-1.5">
                     {[10, 25, 50, 75, 100].map(pct => (
-                      <button
-                        key={pct}
-                        onClick={() => {
-                          const val = usdtBalance * (pct / 100) * leverage;
-                          setAmount(val.toFixed(2));
-                        }}
-                        className="flex-1 text-[10px] py-1 rounded-md bg-secondary text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all"
-                      >
-                        {pct}%
-                      </button>
+                      <button key={pct} onClick={() => setAmount((usdtBalance * (pct / 100) * leverage).toFixed(2))} className="flex-1 text-[10px] py-1 rounded-md bg-secondary text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all">{pct}%</button>
                     ))}
                   </div>
                 </div>
 
-                {/* TP / SL */}
+                {/* TP1 / SL */}
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="block text-[10px] text-muted-foreground mb-1">TP1</label>
-                    <input
-                      type="number"
-                      value={takeProfit}
-                      onChange={e => setTakeProfit(e.target.value)}
-                      placeholder="None"
-                      className="w-full h-8 rounded-lg bg-secondary border border-border px-2 text-xs text-foreground focus:outline-none focus:border-emerald-500 transition-colors"
-                      step="any"
-                    />
+                    <input type="number" value={takeProfit} onChange={e => setTakeProfit(e.target.value)} placeholder="None" className="w-full h-8 rounded-lg bg-secondary border border-border px-2 text-xs text-foreground focus:outline-none focus:border-emerald-500 transition-colors" step="any" />
                   </div>
                   <div>
-                    <label className="block text-[10px] text-muted-foreground mb-1">SL Price</label>
-                    <input
-                      type="number"
-                      value={stopLoss}
-                      onChange={e => setStopLoss(e.target.value)}
-                      placeholder="None"
-                      className="w-full h-8 rounded-lg bg-secondary border border-border px-2 text-xs text-foreground focus:outline-none focus:border-destructive transition-colors"
-                      step="any"
-                    />
+                    <label className="block text-[10px] text-muted-foreground mb-1">SL</label>
+                    <input type="number" value={stopLoss} onChange={e => setStopLoss(e.target.value)} placeholder="None" className="w-full h-8 rounded-lg bg-secondary border border-border px-2 text-xs text-foreground focus:outline-none focus:border-destructive transition-colors" step="any" />
+                  </div>
+                </div>
+
+                {/* TP2 - Partial Take Profit */}
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="col-span-2">
+                    <label className="block text-[10px] text-muted-foreground mb-1">TP2 (Partial)</label>
+                    <input type="number" value={takeProfit2} onChange={e => setTakeProfit2(e.target.value)} placeholder="None" className="w-full h-8 rounded-lg bg-secondary border border-border px-2 text-xs text-foreground focus:outline-none focus:border-emerald-500 transition-colors" step="any" />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-muted-foreground mb-1">TP2 %</label>
+                    <input type="number" value={tp2Percent} onChange={e => setTp2Percent(e.target.value)} placeholder="50" className="w-full h-8 rounded-lg bg-secondary border border-border px-2 text-xs text-foreground focus:outline-none focus:border-primary" min="10" max="90" />
                   </div>
                 </div>
 
                 {/* Position summary */}
                 <div className="bg-secondary/50 rounded-lg p-2.5 space-y-1 text-[11px]">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Position Size</span>
-                    <span className="text-foreground tabular-nums">{sym}{totalPositionSize.toFixed(2)} USDT</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Entry Price</span>
-                    <span className="text-foreground tabular-nums">{effectivePrice.toLocaleString()}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Est. Liq. Price</span>
-                    <span className="text-destructive tabular-nums">
-                      {liquidationPrice ? sym + liquidationPrice.toFixed(2) : "—"}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Fee (0.04%)</span>
-                    <span className="text-foreground tabular-nums">{(totalPositionSize * 0.0004).toFixed(4)} USDT</span>
-                  </div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Position Size</span><span className="text-foreground tabular-nums">{sym}{totalPositionSize.toFixed(2)} USDT</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Entry Price</span><span className="text-foreground tabular-nums">{effectivePrice.toLocaleString()}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Est. Liq. Price</span><span className="text-destructive tabular-nums">{liquidationPrice ? sym + liquidationPrice.toFixed(2) : "—"}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Fee (0.04%)</span><span className="text-foreground tabular-nums">{(totalPositionSize * 0.0004).toFixed(4)} USDT</span></div>
+                  {orderType === "trailing_stop" && <div className="flex justify-between"><span className="text-muted-foreground">Trailing</span><span className="text-primary tabular-nums">{trailingPercent}%</span></div>}
+                  {Number(takeProfit2) > 0 && <div className="flex justify-between"><span className="text-muted-foreground">TP2 Close</span><span className="text-profit tabular-nums">{tp2Percent}% at {sym}{takeProfit2}</span></div>}
                 </div>
 
-                {/* Wallet info */}
                 <div className="flex justify-between text-[11px] text-muted-foreground">
-                  <span>Wallet Balance</span>
-                  <span>{sym}{usdtBalance.toFixed(2)} USDT</span>
+                  <span>Wallet Balance</span><span>{sym}{usdtBalance.toFixed(2)} USDT</span>
                 </div>
                 <div className="flex justify-between text-[11px] text-muted-foreground">
-                  <span>Margin In Use</span>
-                  <span>{sym}{margin.toFixed(2)} USDT</span>
+                  <span>Margin In Use</span><span>{sym}{margin.toFixed(2)} USDT</span>
                 </div>
 
                 <div className="flex gap-2">
-                  <Button
-                    variant="cta"
-                    className="flex-1 h-10 text-sm"
-                    onClick={() => { setSide("long"); openPosition(); }}
-                    disabled={walletsLoading || !amount || Number(amount) <= 0}
-                  >
-                    📈 Buy/Long
+                  <Button variant="cta" className="flex-1 h-10 text-sm" onClick={() => { setSide("long"); setTimeout(() => openPosition(), 0); }} disabled={walletsLoading || !amount || Number(amount) <= 0}>
+                    📈 {t("trading.buy") || "Buy"}/Long
                   </Button>
-                  <Button
-                    variant="destructive"
-                    className="flex-1 h-10 text-sm"
-                    onClick={() => { setSide("short"); openPosition(); }}
-                    disabled={walletsLoading || !amount || Number(amount) <= 0}
-                  >
-                    📉 Sell/Short
+                  <Button variant="destructive" className="flex-1 h-10 text-sm" onClick={() => { setSide("short"); setTimeout(() => openPosition(), 0); }} disabled={walletsLoading || !amount || Number(amount) <= 0}>
+                    📉 {t("trading.sell") || "Sell"}/Short
                   </Button>
                 </div>
               </div>
@@ -648,82 +554,95 @@ const FuturesPage = () => {
           </div>
 
           {/* Open Positions */}
-          <div className="bg-card border border-border rounded-xl p-4 mt-4 overflow-x-auto">
+          <div className="bg-card border border-border rounded-xl p-3 sm:p-4 mt-3 sm:mt-4 overflow-x-auto">
             <h3 className="text-sm font-semibold text-muted-foreground mb-3">Open Positions</h3>
             {positions.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground text-sm">
+              <div className="text-center py-6 sm:py-8 text-muted-foreground text-sm">
                 <ArrowUpDown className="h-8 w-8 mx-auto mb-2 opacity-30" />
-                <p>No open positions. Open a futures position above.</p>
+                <p>{t("trading.noOrders") || "No open positions."}</p>
               </div>
             ) : (
-              <table className="w-full text-xs min-w-[800px]">
-                <thead>
-                  <tr className="text-muted-foreground border-b border-border">
-                    <th className="text-left py-2">Pair</th>
-                    <th className="text-left py-2">Side</th>
-                    <th className="text-right py-2">Entry</th>
-                    <th className="text-right py-2">Mark</th>
-                    <th className="text-right py-2">Amount</th>
-                    <th className="text-right py-2">Leverage</th>
-                    <th className="text-right py-2">Margin</th>
-                    <th className="text-right py-2">Liquidation</th>
-                    <th className="text-right py-2">PnL (USDT)</th>
-                    <th className="text-right py-2"></th>
-                   </tr>
-                </thead>
-                <tbody>
+              <div className="space-y-2 sm:space-y-0">
+                {/* Mobile cards */}
+                <div className="sm:hidden space-y-2">
                   {positions.map(pos => {
-                    let pnl = 0;
-                    if (pos.side === "long") {
-                      pnl = (currentPrice - pos.entryPrice) / pos.entryPrice * pos.amount;
-                    } else {
-                      pnl = (pos.entryPrice - currentPrice) / pos.entryPrice * pos.amount;
-                    }
+                    let pnl = pos.side === "long" ? (currentPrice - pos.entryPrice) / pos.entryPrice * pos.amount : (pos.entryPrice - currentPrice) / pos.entryPrice * pos.amount;
                     const pnlPercent = (pnl / pos.margin) * 100;
                     return (
-                      <tr key={pos.id} className="border-b border-border/50 hover:bg-secondary/30">
-                        <td className="py-2 text-foreground font-medium">{pos.symbol}/USDT</td>
-                        <td className={`py-2 font-semibold ${pos.side === "long" ? "text-profit" : "text-loss"}`}>
-                          {pos.side === "long" ? "Long" : "Short"}
-                        </td>
-                        <td className="py-2 text-right text-foreground tabular-nums">{sym}{pos.entryPrice.toFixed(2)}</td>
-                        <td className="py-2 text-right text-foreground tabular-nums">{sym}{currentPrice.toFixed(2)}</td>
-                        <td className="py-2 text-right text-foreground tabular-nums">{pos.amount.toFixed(2)} USDT</td>
-                        <td className="py-2 text-right text-foreground tabular-nums">{pos.leverage}x</td>
-                        <td className="py-2 text-right text-foreground tabular-nums">{sym}{pos.margin.toFixed(2)}</td>
-                        <td className="py-2 text-right text-loss tabular-nums">{sym}{pos.liquidationPrice.toFixed(2)}</td>
-                        <td className={`py-2 text-right font-bold tabular-nums ${pnl >= 0 ? "text-profit" : "text-loss"}`}>
-                          {pnl >= 0 ? "+" : ""}{pnl.toFixed(2)} ({pnlPercent.toFixed(2)}%)
-                        </td>
-                        <td className="py-2 text-right">
-                          <Button size="sm" variant="ghost" onClick={() => closePosition(pos)} className="text-xs h-7">
-                            Close
-                          </Button>
-                        </td>
-                      </tr>
+                      <div key={pos.id} className="bg-secondary/50 rounded-lg p-3 space-y-2">
+                        <div className="flex justify-between items-center">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-bold text-foreground">{pos.symbol}/USDT</span>
+                            <span className={`text-xs font-semibold px-1.5 py-0.5 rounded ${pos.side === "long" ? "bg-profit/20 text-profit" : "bg-loss/20 text-loss"}`}>{pos.side === "long" ? "Long" : "Short"} {pos.leverage}x</span>
+                          </div>
+                          <span className={`text-sm font-bold tabular-nums ${pnl >= 0 ? "text-profit" : "text-loss"}`}>{pnl >= 0 ? "+" : ""}{pnl.toFixed(2)} ({pnlPercent.toFixed(1)}%)</span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 text-[11px]">
+                          <div><span className="text-muted-foreground">Entry</span><p className="text-foreground tabular-nums">{sym}{pos.entryPrice.toFixed(2)}</p></div>
+                          <div><span className="text-muted-foreground">Mark</span><p className="text-foreground tabular-nums">{sym}{currentPrice.toFixed(2)}</p></div>
+                          <div><span className="text-muted-foreground">Margin</span><p className="text-foreground tabular-nums">{sym}{pos.margin.toFixed(2)}</p></div>
+                        </div>
+                        {(pos.tp1 || pos.tp2 || pos.stopLoss || pos.trailingStop) && (
+                          <div className="flex gap-2 flex-wrap text-[10px]">
+                            {pos.tp1 && <span className="px-1.5 py-0.5 rounded bg-profit/10 text-profit">TP1: {sym}{pos.tp1} {pos.tp1Hit ? "✓" : ""}</span>}
+                            {pos.tp2 && <span className="px-1.5 py-0.5 rounded bg-profit/10 text-profit">TP2: {sym}{pos.tp2}</span>}
+                            {pos.stopLoss && <span className="px-1.5 py-0.5 rounded bg-loss/10 text-loss">SL: {sym}{pos.stopLoss}</span>}
+                            {pos.trailingStop && <span className="px-1.5 py-0.5 rounded bg-primary/10 text-primary">Trail: {pos.trailingStop}%</span>}
+                          </div>
+                        )}
+                        <Button size="sm" variant="outline" onClick={() => closePosition(pos)} className="w-full text-xs h-8">Close Position</Button>
+                      </div>
                     );
                   })}
-                </tbody>
-              </table>
+                </div>
+                {/* Desktop table */}
+                <table className="hidden sm:table w-full text-xs min-w-[800px]">
+                  <thead>
+                    <tr className="text-muted-foreground border-b border-border">
+                      <th className="text-left py-2">Pair</th><th className="text-left py-2">Side</th><th className="text-right py-2">Entry</th><th className="text-right py-2">Mark</th><th className="text-right py-2">Amount</th><th className="text-right py-2">Lev.</th><th className="text-right py-2">TP/SL</th><th className="text-right py-2">PnL</th><th className="text-right py-2"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {positions.map(pos => {
+                      let pnl = pos.side === "long" ? (currentPrice - pos.entryPrice) / pos.entryPrice * pos.amount : (pos.entryPrice - currentPrice) / pos.entryPrice * pos.amount;
+                      const pnlPercent = (pnl / pos.margin) * 100;
+                      return (
+                        <tr key={pos.id} className="border-b border-border/50 hover:bg-secondary/30">
+                          <td className="py-2 text-foreground font-medium">{pos.symbol}/USDT</td>
+                          <td className={`py-2 font-semibold ${pos.side === "long" ? "text-profit" : "text-loss"}`}>{pos.side === "long" ? "Long" : "Short"}</td>
+                          <td className="py-2 text-right text-foreground tabular-nums">{sym}{pos.entryPrice.toFixed(2)}</td>
+                          <td className="py-2 text-right text-foreground tabular-nums">{sym}{currentPrice.toFixed(2)}</td>
+                          <td className="py-2 text-right text-foreground tabular-nums">{pos.amount.toFixed(2)} USDT</td>
+                          <td className="py-2 text-right text-foreground tabular-nums">{pos.leverage}x</td>
+                          <td className="py-2 text-right text-[10px]">
+                            {pos.tp1 && <span className="text-profit">TP1:{pos.tp1}{pos.tp1Hit ? "✓" : ""} </span>}
+                            {pos.tp2 && <span className="text-profit">TP2:{pos.tp2} </span>}
+                            {pos.stopLoss && <span className="text-loss">SL:{pos.stopLoss} </span>}
+                            {pos.trailingStop && <span className="text-primary">T:{pos.trailingStop}%</span>}
+                          </td>
+                          <td className={`py-2 text-right font-bold tabular-nums ${pnl >= 0 ? "text-profit" : "text-loss"}`}>{pnl >= 0 ? "+" : ""}{pnl.toFixed(2)} ({pnlPercent.toFixed(2)}%)</td>
+                          <td className="py-2 text-right"><Button size="sm" variant="ghost" onClick={() => closePosition(pos)} className="text-xs h-7">Close</Button></td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
 
-          {/* Available Futures Markets */}
-          <div className="bg-card border border-border rounded-xl p-4 mt-4">
+          {/* Markets */}
+          <div className="bg-card border border-border rounded-xl p-3 sm:p-4 mt-3 sm:mt-4 mb-4">
             <h3 className="text-sm font-semibold text-muted-foreground mb-3">Available Futures Markets</h3>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 sm:gap-3">
               {prices.slice(0, 12).map(coin => (
-                <div
-                  key={coin.id}
-                  onClick={() => setSelectedCoin(coin.id)}
-                  className="bg-secondary/50 rounded-xl p-3 text-center hover:border-primary/30 border border-transparent transition-colors cursor-pointer"
-                >
-                  <div className="flex items-center justify-center gap-2 mb-1">
-                    <img src={coin.image} alt={coin.name} className="w-5 h-5 rounded-full" />
-                    <span className="text-sm font-semibold text-foreground">{getSymbol(coin.id)}/USDT</span>
+                <div key={coin.id} onClick={() => setSelectedCoin(coin.id)} className="bg-secondary/50 rounded-xl p-2 sm:p-3 text-center hover:border-primary/30 border border-transparent transition-colors cursor-pointer">
+                  <div className="flex items-center justify-center gap-1 mb-1">
+                    <img src={coin.image} alt={coin.name} className="w-4 h-4 sm:w-5 sm:h-5 rounded-full" />
+                    <span className="text-xs sm:text-sm font-semibold text-foreground">{getSymbol(coin.id)}/USDT</span>
                   </div>
-                  <p className="text-base font-bold text-foreground">${coin.current_price.toLocaleString()}</p>
-                  <p className={`text-xs ${coin.price_change_percentage_24h >= 0 ? "text-profit" : "text-loss"}`}>
+                  <p className="text-sm sm:text-base font-bold text-foreground">${coin.current_price.toLocaleString()}</p>
+                  <p className={`text-[10px] sm:text-xs ${coin.price_change_percentage_24h >= 0 ? "text-profit" : "text-loss"}`}>
                     {coin.price_change_percentage_24h >= 0 ? "+" : ""}{coin.price_change_percentage_24h.toFixed(2)}%
                   </p>
                 </div>
