@@ -110,6 +110,7 @@ const BotsPage = () => {
   const [selectedChartPair, setSelectedChartPair] = useState("bitcoin");
   const chartRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const [chartLoading, setChartLoading] = useState(true);
 
   // Chat state
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
@@ -354,17 +355,67 @@ const BotsPage = () => {
     return sortedDates.map(date => { cumulative += dailyProfit[date]; return { date, profit: cumulative }; });
   }, [userTrades]);
 
-  // TradingView chart
+  // Improved chart loading effect (fix: ensures chart loads on all screen sizes)
   useEffect(() => {
-    if (!chartRef.current || !getSymbol(selectedChartPair)) return;
-    while (chartRef.current.firstChild) chartRef.current.removeChild(chartRef.current.firstChild);
-    const script = document.createElement("script");
-    script.src = "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
-    script.type = "text/javascript";
-    script.async = true;
-    script.innerHTML = JSON.stringify({ autosize: true, symbol: `BINANCE:${getSymbol(selectedChartPair)}USDT`, interval: "15", timezone: "Etc/UTC", theme: document.documentElement.classList.contains("dark") ? "dark" : "light", style: "1", locale: "en", allow_symbol_change: false, support_host: "https://www.tradingview.com" });
-    chartRef.current.appendChild(script);
-    return () => { if (chartRef.current) chartRef.current.innerHTML = ""; };
+    const container = chartRef.current;
+    if (!container || !getSymbol(selectedChartPair)) return;
+
+    const loadChart = () => {
+      if (!container) return;
+      while (container.firstChild) container.removeChild(container.firstChild);
+      
+      const script = document.createElement("script");
+      script.src = "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
+      script.type = "text/javascript";
+      script.async = true;
+      script.innerHTML = JSON.stringify({
+        autosize: true,
+        symbol: `BINANCE:${getSymbol(selectedChartPair)}USDT`,
+        interval: "15",
+        timezone: "Etc/UTC",
+        theme: document.documentElement.classList.contains("dark") ? "dark" : "light",
+        style: "1",
+        locale: "en",
+        allow_symbol_change: false,
+        support_host: "https://www.tradingview.com"
+      });
+      
+      script.onload = () => setChartLoading(false);
+      script.onerror = () => {
+        setChartLoading(false);
+        toast.error("Chart failed to load. Please refresh.");
+      };
+      
+      container.appendChild(script);
+    };
+
+    const tryLoad = () => {
+      if (container.offsetWidth > 0 && container.offsetHeight > 0) {
+        loadChart();
+      } else {
+        const observer = new ResizeObserver(entries => {
+          for (let entry of entries) {
+            if (entry.contentRect.width > 0 && entry.contentRect.height > 0) {
+              observer.disconnect();
+              loadChart();
+              break;
+            }
+          }
+        });
+        observer.observe(container);
+        setTimeout(() => {
+          observer.disconnect();
+          if (container.children.length === 0) loadChart();
+        }, 500);
+      }
+    };
+
+    setChartLoading(true);
+    tryLoad();
+
+    return () => {
+      if (container) container.innerHTML = "";
+    };
   }, [selectedChartPair, getSymbol]);
 
   // Chat command handler
@@ -516,10 +567,18 @@ const BotsPage = () => {
                 </div>
                 <div className="flex gap-2"><span className="text-lg font-bold">${currentPrice.toLocaleString()}</span>{selectedPairPrice && <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${selectedPairPrice.price_change_percentage_24h >= 0 ? "bg-profit/10 text-profit" : "bg-loss/10 text-loss"}`}>{selectedPairPrice.price_change_percentage_24h >= 0 ? "+" : ""}{selectedPairPrice.price_change_percentage_24h.toFixed(2)}%</span>}</div>
               </div>
-              <div className="flex-1 bg-background p-4"><div ref={chartRef} className="w-full h-full min-h-[300px]" /></div>
+              {/* Chart area with loading spinner */}
+              <div className="flex-1 bg-background p-4 relative">
+                {chartLoading && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-background/80 z-10">
+                    <RefreshCw className="h-6 w-6 animate-spin text-primary" />
+                  </div>
+                )}
+                <div ref={chartRef} className="w-full h-full min-h-[300px]" />
+              </div>
               <div className="border-t bg-card"><div className="flex gap-6 px-4 overflow-x-auto">{(["running","history","pnl"] as const).map(t => (<button key={t} className={`py-3 text-sm font-medium border-b-2 ${bottomTab === t ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`} onClick={() => setBottomTab(t)}>{t === "running" ? "Running" : t === "history" ? "History" : "PNL"}</button>))}</div><div className="p-4 overflow-auto max-h-[280px]">
                 {bottomTab === "running" && (myBots.filter(b => b.status === "running").length === 0 ? <div className="text-center py-8 text-sm">No bots running.</div> : <div className="space-y-2">{myBots.filter(b => b.status === "running").map(bot => (<div key={bot.id} className="flex justify-between items-center p-3 bg-secondary/50 rounded-lg cursor-pointer" onClick={() => setViewingRunningBot(bot)}><div><p className="text-sm font-medium">{bot.name}</p><p className="text-[11px] text-muted-foreground">{getSymbol(bot.crypto_id)}/USDT • Staked: ${(bot.config?.staked_amount || 0).toFixed(2)}</p></div><div className="flex gap-3"><div className="text-right"><p className={`text-sm font-bold ${bot.total_profit >= 0 ? "text-profit" : "text-loss"}`}>{bot.total_profit >= 0 ? "+" : ""}${bot.total_profit.toFixed(2)}</p><p className="text-[10px]">{bot.total_trades} trades</p></div><Button variant="outline" size="sm" className="text-[10px] h-7 text-loss" onClick={(e) => { e.stopPropagation(); if (confirm("Stop bot?")) unstakeBot.mutate(bot); }}>Unstake</Button></div></div>))}</div>)}
-                {bottomTab === "history" && (userTrades.length === 0 ? <p className="text-center text-sm">No trade history.</p> : <div className="overflow-x-auto"><table className="w-full text-xs"><thead><tr className="text-muted-foreground"><th className="text-left py-2">Pair</th><th>Side</th><th className="text-right">Price</th><th className="text-right">Amount</th><th className="text-right">PNL</th><th className="text-right">Time</th></tr></thead><tbody>{userTrades.slice(0,20).map(t => (<tr key={t.id}><td>{getSymbol(t.crypto_id)}/USDT</td><td className={t.side==="buy"?"text-profit":"text-loss"}>{t.side}</td><td className="text-right">${Number(t.price).toLocaleString()}</td><td className="text-right">{Number(t.amount).toFixed(4)}</td><td className={`text-right ${(t.pnl||0)>=0?"text-profit":"text-loss"}`}>${(t.pnl||0).toFixed(2)}</td><td className="text-right text-muted-foreground">{new Date(t.created_at).toLocaleTimeString()}</td></tr>))}</tbody></table></div>)}
+                {bottomTab === "history" && (userTrades.length === 0 ? <p className="text-center text-sm">No trade history.</p> : <div className="overflow-x-auto"><table className="w-full text-xs"><thead><tr className="text-muted-foreground"><th className="text-left py-2">Pair</th><th>Side</th><th className="text-right">Price</th><th className="text-right">Amount</th><th className="text-right">PNL</th><th className="text-right">Time</th> </tr></thead><tbody>{userTrades.slice(0,20).map(t => (<tr key={t.id}><td>{getSymbol(t.crypto_id)}/USDT</td><td className={t.side==="buy"?"text-profit":"text-loss"}>{t.side}</td><td className="text-right">${Number(t.price).toLocaleString()}</td><td className="text-right">{Number(t.amount).toFixed(4)}</td><td className={`text-right ${(t.pnl||0)>=0?"text-profit":"text-loss"}`}>${(t.pnl||0).toFixed(2)}</td><td className="text-right text-muted-foreground">{new Date(t.created_at).toLocaleTimeString()}</td></tr>))}</tbody></table></div>)}
                 {bottomTab === "pnl" && (pnlChartData.length === 0 ? <div className="text-center py-8"><BarChart3 className="h-8 w-8 mx-auto opacity-30" /><p>No PNL data yet.</p></div> : <div className="h-64"><ResponsiveContainer><LineChart data={pnlChartData}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="date" /><YAxis /><Tooltip /><Line type="monotone" dataKey="profit" stroke="#22c55e" strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></div>)}
               </div></div>
             </div>
@@ -549,7 +608,14 @@ const BotsPage = () => {
               </div>
               <div className="flex gap-2"><span className="text-lg font-bold">${currentPrice.toLocaleString()}</span>{selectedPairPrice && <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${selectedPairPrice.price_change_percentage_24h >= 0 ? "bg-profit/10 text-profit" : "bg-loss/10 text-loss"}`}>{selectedPairPrice.price_change_percentage_24h >= 0 ? "+" : ""}{selectedPairPrice.price_change_percentage_24h.toFixed(2)}%</span>}</div>
             </div>
-            <div className="h-48 bg-background p-2"><div ref={chartRef} className="w-full h-full" /></div>
+            <div className="h-48 bg-background p-2 relative">
+              {chartLoading && (
+                <div className="absolute inset-0 flex items-center justify-center bg-background/80 z-10">
+                  <RefreshCw className="h-5 w-5 animate-spin text-primary" />
+                </div>
+              )}
+              <div ref={chartRef} className="w-full h-full" />
+            </div>
 
             {/* Bottom tabs: now includes "Bots" */}
             <div className="border-t bg-card flex-shrink-0">
