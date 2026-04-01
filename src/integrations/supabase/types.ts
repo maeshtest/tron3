@@ -562,6 +562,7 @@ export type Database = {
           created_at: string
           crypto_id: string
           id: string
+          network: string | null
           notes: string | null
           status: string
           tx_hash: string | null
@@ -576,6 +577,7 @@ export type Database = {
           created_at?: string
           crypto_id: string
           id?: string
+          network?: string | null
           notes?: string | null
           status?: string
           tx_hash?: string | null
@@ -590,6 +592,7 @@ export type Database = {
           created_at?: string
           crypto_id?: string
           id?: string
+          network?: string | null
           notes?: string | null
           status?: string
           tx_hash?: string | null
@@ -682,6 +685,36 @@ export type Database = {
           id?: string
           updated_at?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      withdrawal_otps: {
+        Row: {
+          code: string
+          created_at: string
+          expires_at: string
+          id: string
+          transaction_data: Json
+          user_id: string
+          verified: boolean | null
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          expires_at?: string
+          id?: string
+          transaction_data: Json
+          user_id: string
+          verified?: boolean | null
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          expires_at?: string
+          id?: string
+          transaction_data?: Json
+          user_id?: string
+          verified?: boolean | null
         }
         Relationships: []
       }
