@@ -45,7 +45,7 @@ export function useTransactions() {
     wallet_address?: string;
     network?: string;
   }) => {
-    const { network, ...insertData } = tx;
+    const { ...insertData } = tx;
     if (!user) throw new Error("Not authenticated");
     const { error } = await supabase.from("transactions").insert({
       user_id: user.id,
