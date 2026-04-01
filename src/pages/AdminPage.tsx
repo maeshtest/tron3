@@ -7,7 +7,7 @@ import {
   CheckCircle2, XCircle, Clock, Bot, Plus, Trash2, Play, Square,
   DollarSign, Activity, BarChart3, Search, Filter, ChevronLeft,
   ChevronRight, RefreshCw, AlertTriangle, Edit2, TrendingUp, Zap,
-  UserPlus, ShieldCheck
+  UserPlus, ShieldCheck, Mail
 } from "lucide-react";
 import { useSiteSettingsDB } from "@/hooks/useSiteSettingsDB";
 import {
@@ -265,6 +265,7 @@ const AdminPage = () => {
   const [localFee, setLocalFee] = useState(settings.withdraw_fee_percent);
   const [localMaintenance, setLocalMaintenance] = useState(settings.maintenance_mode || false);
   const [localReferralBonus, setLocalReferralBonus] = useState(settings.referral_bonus_percent || 10);
+  const [localResendKey, setLocalResendKey] = useState((settings as any).resend_api_key || "");
 
   // Bot creation state
   const [newBotName, setNewBotName] = useState("");
@@ -333,6 +334,7 @@ const AdminPage = () => {
         updateSetting.mutateAsync({ key: "withdraw_fee_percent", value: localFee }),
         updateSetting.mutateAsync({ key: "maintenance_mode", value: localMaintenance }),
         updateSetting.mutateAsync({ key: "referral_bonus_percent", value: localReferralBonus }),
+        ...(localResendKey ? [updateSetting.mutateAsync({ key: "resend_api_key", value: localResendKey })] : []),
       ]);
       toast.success("Settings saved!");
     } catch (err: any) {
@@ -945,6 +947,22 @@ const AdminPage = () => {
                   <label className="block text-xs text-muted-foreground mb-1">Referral Bonus (%)</label>
                   <input type="number" value={localReferralBonus} onChange={e => setLocalReferralBonus(Number(e.target.value))} step="0.5" className={inputClass} />
                 </div>
+              </div>
+            </div>
+
+            {/* Email / Resend API */}
+            <div className="bg-card border border-border rounded-xl p-5 space-y-4">
+              <h3 className="text-sm font-semibold text-foreground flex items-center gap-2"><Mail className="h-4 w-4" /> Email Configuration (Resend)</h3>
+              <div>
+                <label className="block text-xs text-muted-foreground mb-1">Resend API Key</label>
+                <input
+                  type="password"
+                  value={localResendKey}
+                  onChange={e => setLocalResendKey(e.target.value)}
+                  placeholder="re_xxxxxxxxxxxx"
+                  className={inputClass}
+                />
+                <p className="text-[10px] text-muted-foreground mt-1">Used for withdrawal OTP verification emails. Get your key from resend.com</p>
               </div>
             </div>
 
