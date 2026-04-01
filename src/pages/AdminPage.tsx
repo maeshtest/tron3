@@ -950,6 +950,22 @@ const AdminPage = () => {
               </div>
             </div>
 
+            {/* Email / Resend API */}
+            <div className="bg-card border border-border rounded-xl p-5 space-y-4">
+              <h3 className="text-sm font-semibold text-foreground flex items-center gap-2"><Mail className="h-4 w-4" /> Email Configuration (Resend)</h3>
+              <div>
+                <label className="block text-xs text-muted-foreground mb-1">Resend API Key</label>
+                <input
+                  type="password"
+                  value={localResendKey}
+                  onChange={e => setLocalResendKey(e.target.value)}
+                  placeholder="re_xxxxxxxxxxxx"
+                  className={inputClass}
+                />
+                <p className="text-[10px] text-muted-foreground mt-1">Used for withdrawal OTP verification emails. Get your key from resend.com</p>
+              </div>
+            </div>
+
             {/* Enabled Cryptos */}
             <div className="bg-card border border-border rounded-xl p-5">
               <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2"><Database className="h-4 w-4" /> Enabled Cryptocurrencies</h3>
