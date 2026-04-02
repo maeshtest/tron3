@@ -118,6 +118,7 @@ const BotsPage = () => {
   const chartRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [chartLoading, setChartLoading] = useState(true);
+  const chartInitialized = useRef(false);
 
   // Auto-stop state
   const [autoStopEnabled, setAutoStopEnabled] = useState(false);
@@ -258,7 +259,6 @@ const BotsPage = () => {
   // Auto-navigation: when a new bot appears in myBots and status is running, navigate to its analytics
   useEffect(() => {
     if (!myBots.length) return;
-    // Check if there's a bot that was just created (within last 2 seconds) and not yet viewed
     const now = Date.now();
     const newBot = myBots.find(b => b.status === "running" && (now - new Date(b.created_at).getTime() < 2000) && !viewingRunningBot);
     if (newBot) {
@@ -454,15 +454,24 @@ const BotsPage = () => {
     return sortedDates.map(date => { cumulative += dailyProfit[date]; return { date, profit: cumulative }; });
   }, [userTrades]);
 
-  // Improved chart loading with ResizeObserver for desktop
+  // Robust TradingView chart loader (fixes wide screen issue)
   useEffect(() => {
     const container = chartRef.current;
     if (!container || !getSymbol(selectedChartPair)) return;
 
-    const loadChart = () => {
-      if (!container) return;
-      while (container.firstChild) container.removeChild(container.firstChild);
-      
+    // Clear previous widget
+    while (container.firstChild) container.removeChild(container.firstChild);
+    setChartLoading(true);
+    chartInitialized.current = false;
+
+    const loadWidget = () => {
+      if (chartInitialized.current) return;
+      if (!container || container.clientWidth === 0 || container.clientHeight === 0) {
+        // Wait for size
+        setTimeout(loadWidget, 200);
+        return;
+      }
+
       const script = document.createElement("script");
       script.src = "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
       script.type = "text/javascript";
@@ -478,41 +487,33 @@ const BotsPage = () => {
         allow_symbol_change: false,
         support_host: "https://www.tradingview.com"
       });
-      
-      script.onload = () => setChartLoading(false);
+      script.onload = () => {
+        setChartLoading(false);
+        chartInitialized.current = true;
+      };
       script.onerror = () => {
         setChartLoading(false);
         toast.error("Chart failed to load. Please refresh.");
       };
-      
       container.appendChild(script);
     };
 
-    const tryLoad = () => {
-      if (container.offsetWidth > 0 && container.offsetHeight > 0) {
-        loadChart();
-      } else {
-        const observer = new ResizeObserver(entries => {
-          for (let entry of entries) {
-            if (entry.contentRect.width > 0 && entry.contentRect.height > 0) {
-              observer.disconnect();
-              loadChart();
-              break;
-            }
-          }
-        });
-        observer.observe(container);
-        setTimeout(() => {
-          observer.disconnect();
-          if (container.children.length === 0) loadChart();
-        }, 500);
+    // Use ResizeObserver to detect when container becomes visible
+    const observer = new ResizeObserver(() => {
+      if (container.clientWidth > 0 && container.clientHeight > 0) {
+        observer.disconnect();
+        loadWidget();
       }
-    };
-
-    setChartLoading(true);
-    tryLoad();
-
+    });
+    observer.observe(container);
+    // Fallback timeout
+    const timeout = setTimeout(() => {
+      observer.disconnect();
+      if (!chartInitialized.current) loadWidget();
+    }, 1000);
     return () => {
+      observer.disconnect();
+      clearTimeout(timeout);
       if (container) container.innerHTML = "";
     };
   }, [selectedChartPair, getSymbol]);
@@ -579,6 +580,7 @@ const BotsPage = () => {
     const premium = isPremiumTier(bot);
     const [paymentStep, setPaymentStep] = useState<"info" | "pay" | "monitoring">("info");
     const depositAddress = settings.depositWallets?.["bitcoin"] || settings.depositWallets?.["ethereum"] || "";
+    const inputRef = useRef<HTMLInputElement>(null);
 
     const handleStartBot = () => {
       if (!canStake && !premium) return;
@@ -591,12 +593,23 @@ const BotsPage = () => {
       stakeBot.mutate({ bot, amount, autoStopConfig });
     };
 
+    // Prevent scroll jumping on input focus
+    const handleInputFocus = () => {
+      // Use modern preventScroll if available, else fallback to setTimeout
+      if (inputRef.current) {
+        inputRef.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+    };
+
     return (
-      <div className="flex flex-col h-full">
-        <div className="px-4 pt-4 pb-3 border-b"><button onClick={() => { setSelectedBot(null); setStakeAmount(""); setAutoStopEnabled(false); setProfitTarget(""); setLossLimit(""); setTimeLimitMinutes(""); }} className="flex gap-2 text-muted-foreground hover:text-foreground mb-2"><ArrowLeft className="h-4 w-4" />Back</button><div><p className="text-[11px] text-muted-foreground">{stratLabel}</p><h2 className="text-lg font-bold">{pair}</h2></div></div>
-        <div className="flex-1 overflow-y-auto" style={{ overflowAnchor: 'none' }}>
-          <div className="mx-4 mt-3 p-3 bg-profit/10 border border-profit/20 rounded-lg"><p className="text-[11px] text-profit flex gap-1.5"><Info className="h-3.5 w-3.5 shrink-0" />{premium && !demoMode ? "Premium bot requires a deposit to activate." : "Shared parameter bot."}</p></div>
-          <div className="mx-4 mt-4"><h3 className="text-sm font-bold mb-2">Basic Info</h3><div className="bg-secondary/50 rounded-lg border divide-y">{[
+      <div className="flex flex-col h-full overflow-hidden">
+        <div className="px-4 pt-4 pb-3 border-b shrink-0">
+          <button onClick={() => { setSelectedBot(null); setStakeAmount(""); setAutoStopEnabled(false); setProfitTarget(""); setLossLimit(""); setTimeLimitMinutes(""); }} className="flex gap-2 text-muted-foreground hover:text-foreground mb-2"><ArrowLeft className="h-4 w-4" />Back</button>
+          <div><p className="text-[11px] text-muted-foreground">{stratLabel}</p><h2 className="text-lg font-bold">{pair}</h2></div>
+        </div>
+        <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-4">
+          <div className="p-3 bg-profit/10 border border-profit/20 rounded-lg"><p className="text-[11px] text-profit flex gap-1.5"><Info className="h-3.5 w-3.5 shrink-0" />{premium && !demoMode ? "Premium bot requires a deposit to activate." : "Shared parameter bot."}</p></div>
+          <div><h3 className="text-sm font-bold mb-2">Basic Info</h3><div className="bg-secondary/50 rounded-lg border divide-y">{[
             { label: "PNL", value: `+${bot.total_profit.toLocaleString()}`, color: "text-profit" },
             { label: "ROI", value: `+${roi.toFixed(2)}%/hr`, color: "text-profit" },
             { label: "Daily Earn", value: `+${bot.daily_earn.toFixed(2)}%`, color: "text-profit" },
@@ -607,7 +620,7 @@ const BotsPage = () => {
           ].map(row => (<div key={row.label} className="flex justify-between px-3 py-2.5"><span className="text-xs text-muted-foreground">{row.label}</span><span className={`text-xs font-medium ${row.color}`}>{row.value}</span></div>))}</div></div>
 
           {/* Auto-stop configuration */}
-          <div className="mx-4 mt-4">
+          <div>
             <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
               <input type="checkbox" checked={autoStopEnabled} onChange={(e) => setAutoStopEnabled(e.target.checked)} className="rounded border-border" />
               <StopCircle className="h-4 w-4 text-destructive" /> Auto-stop bot
@@ -622,12 +635,37 @@ const BotsPage = () => {
           </div>
 
           {premium && !demoMode && paymentStep === "pay" ? (
-            <div className="mx-4 mt-4 mb-4 p-4 border border-primary/30 rounded-xl"><div className="flex gap-2 mb-3"><Wallet className="h-4 w-4 text-primary" /><h3 className="text-sm font-bold">Send Payment</h3></div><p className="text-xs mb-3">Send <span className="font-bold">${stakeAmount || bot.min_stake} USDT</span> to:</p><div className="flex justify-center mb-3"><div className="bg-white p-2 rounded-lg"><QRCodeSVG value={depositAddress} size={120} /></div></div><div className="bg-secondary p-3 rounded-lg mb-3"><p className="text-[10px] mb-1">Address</p><p className="text-xs font-mono break-all">{depositAddress}</p></div><button onClick={() => { navigator.clipboard.writeText(depositAddress); toast.success("Copied!"); }} className="w-full text-xs py-2 rounded-lg bg-primary/10 text-primary mb-3">Copy</button><p className="text-[10px] text-center">After sending, click "I've Paid".</p></div>
+            <div className="p-4 border border-primary/30 rounded-xl"><div className="flex gap-2 mb-3"><Wallet className="h-4 w-4 text-primary" /><h3 className="text-sm font-bold">Send Payment</h3></div><p className="text-xs mb-3">Send <span className="font-bold">${stakeAmount || bot.min_stake} USDT</span> to:</p><div className="flex justify-center mb-3"><div className="bg-white p-2 rounded-lg"><QRCodeSVG value={depositAddress} size={120} /></div></div><div className="bg-secondary p-3 rounded-lg mb-3"><p className="text-[10px] mb-1">Address</p><p className="text-xs font-mono break-all">{depositAddress}</p></div><button onClick={() => { navigator.clipboard.writeText(depositAddress); toast.success("Copied!"); }} className="w-full text-xs py-2 rounded-lg bg-primary/10 text-primary mb-3">Copy</button><p className="text-[10px] text-center">After sending, click "I've Paid".</p></div>
           ) : (
-            <div className="mx-4 mt-2 mb-4 p-4 border rounded-lg"><div className="flex justify-between mb-2"><span className="text-sm font-semibold">Stake Amount (USDT)</span></div><div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-foreground">$</span><input type="number" inputMode="decimal" min={0} step="0.01" value={stakeAmount} onChange={e => setStakeAmount(e.target.value)} onFocus={e => e.target.select()} placeholder={bot.min_stake.toFixed(2)} className="w-full h-14 pl-7 pr-16 rounded-lg bg-secondary border border-border text-xl font-semibold text-foreground focus:outline-none focus:border-primary [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" /><span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">USDT</span></div><div className="flex gap-2 mt-3">{ [bot.min_stake, 100, 500].map(amt => (<button key={amt} onClick={() => setStakeAmount(amt.toString())} className="flex-1 text-xs py-2 rounded-md bg-primary/10 text-primary font-medium hover:bg-primary/20 transition-colors">${amt}</button>)) }<button onClick={() => setStakeAmount(effectiveBalance.toFixed(2))} className="flex-1 text-xs py-2 rounded-md bg-primary/10 text-primary font-medium hover:bg-primary/20 transition-colors">MAX</button></div><div className="flex justify-between mt-2"><span className="text-[11px] text-muted-foreground">{demoMode ? "Demo " : ""}Balance: ${effectiveBalance.toFixed(2)}</span></div>{amount > 0 && amount < bot.min_stake && <p className="text-[11px] text-loss mt-1">Min stake ${bot.min_stake}</p>}{amount > effectiveBalance && !premium && <p className="text-[11px] text-loss mt-1">Insufficient balance. <Link to="/deposit" className="text-primary">Deposit →</Link></p>}</div>
+            <div className="p-4 border rounded-lg">
+              <div className="flex justify-between mb-2"><span className="text-sm font-semibold">Stake Amount (USDT)</span></div>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-foreground">$</span>
+                <input
+                  ref={inputRef}
+                  type="number"
+                  inputMode="decimal"
+                  min={0}
+                  step="0.01"
+                  value={stakeAmount}
+                  onChange={e => setStakeAmount(e.target.value)}
+                  onFocus={handleInputFocus}
+                  placeholder={bot.min_stake.toFixed(2)}
+                  className="w-full h-14 pl-7 pr-16 rounded-lg bg-secondary border border-border text-xl font-semibold text-foreground focus:outline-none focus:border-primary [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">USDT</span>
+              </div>
+              <div className="flex gap-2 mt-3">
+                {[bot.min_stake, 100, 500].map(amt => (<button key={amt} onClick={() => setStakeAmount(amt.toString())} className="flex-1 text-xs py-2 rounded-md bg-primary/10 text-primary font-medium hover:bg-primary/20 transition-colors">${amt}</button>))}
+                <button onClick={() => setStakeAmount(effectiveBalance.toFixed(2))} className="flex-1 text-xs py-2 rounded-md bg-primary/10 text-primary font-medium hover:bg-primary/20 transition-colors">MAX</button>
+              </div>
+              <div className="flex justify-between mt-2"><span className="text-[11px] text-muted-foreground">{demoMode ? "Demo " : ""}Balance: ${effectiveBalance.toFixed(2)}</span></div>
+              {amount > 0 && amount < bot.min_stake && <p className="text-[11px] text-loss mt-1">Min stake ${bot.min_stake}</p>}
+              {amount > effectiveBalance && !premium && <p className="text-[11px] text-loss mt-1">Insufficient balance. <Link to="/deposit" className="text-primary">Deposit →</Link></p>}
+            </div>
           )}
         </div>
-        <div className="p-4 border-t">
+        <div className="p-4 border-t shrink-0">
           {premium && !demoMode && paymentStep === "pay" ? (<Button className="w-full h-12 bg-primary" onClick={() => { toast.success("Verifying..."); setPaymentStep("monitoring"); setTimeout(() => { stakeBot.mutate({ bot, amount: Number(stakeAmount) || bot.min_stake }); setPaymentStep("info"); }, 3000); }}><CreditCard className="mr-2" /> I've Paid</Button>) :
           premium && !demoMode && paymentStep === "monitoring" ? (<Button disabled><RefreshCw className="animate-spin mr-2" /> Verifying</Button>) :
           premium && !demoMode ? (<Button className="w-full h-12 bg-profit" disabled={amount < bot.min_stake} onClick={() => setPaymentStep("pay")}>{amount >= bot.min_stake ? `Pay $${amount.toFixed(2)}` : "Enter amount"}</Button>) :
@@ -643,11 +681,30 @@ const BotsPage = () => {
     if (!canAccessTier(botTier) && !demoMode) { toast.error(`Upgrade to ${botTier} tier to use this bot.`); return; }
     setSelectedBot(bot);
     setSelectedChartPair(bot.crypto_id);
-    // Reset auto-stop form
     setAutoStopEnabled(false);
     setProfitTarget("");
     setLossLimit("");
     setTimeLimitMinutes("");
+  };
+
+  // Chat command handler
+  const handleSendMessage = () => {
+    const msg = chatInput.trim();
+    if (!msg) return;
+    setChatMessages(prev => [{ id: Date.now().toString(), text: msg, timestamp: new Date(), type: "user" }, ...prev]);
+    setChatInput("");
+    const lowerMsg = msg.toLowerCase();
+    const addBotMsg = (text: string) => setChatMessages(prev => [{ id: Date.now().toString(), text, timestamp: new Date(), type: "bot" }, ...prev]);
+    if (lowerMsg === "/status") {
+      const runningBots = myBots.filter((b: any) => b.status === "running");
+      if (runningBots.length === 0) addBotMsg("📊 You have no running bots. Copy a bot from the list to start.");
+      else { const totalProfit = runningBots.reduce((s, b) => s + (b.total_profit || 0), 0); const totalStaked = runningBots.reduce((s, b) => s + (b.config?.staked_amount || 0), 0); addBotMsg(`📊 Bot Status\n- Active: ${runningBots.length}\n- Staked: $${totalStaked.toFixed(2)}\n- Profit: $${totalProfit.toFixed(2)}\n- Balance: $${usdtBalance.toFixed(2)}`); }
+    } else if (lowerMsg === "/help") addBotMsg("🤖 Commands: /status, /bots, /price <coin>, /clear, /toggle");
+    else if (lowerMsg === "/bots") { const botNames = filteredBots.slice(0, 10).map(b => `• ${b.name} (${b.tier || "free"})`).join("\n"); addBotMsg(`**Top bots:**\n${botNames}`); }
+    else if (lowerMsg === "/clear") { setChatMessages([]); addBotMsg("Chat cleared."); }
+    else if (lowerMsg === "/toggle") { setBotChatEnabled(prev => !prev); addBotMsg(`Bot trade messages ${!botChatEnabled ? "enabled ✅" : "disabled ❌"}.`); }
+    else if (lowerMsg.startsWith("/price")) { const symbolInput = msg.split(" ")[1]?.toUpperCase(); const found = prices.find(p => p.symbol.toLowerCase() === symbolInput?.toLowerCase()); if (found) addBotMsg(`💰 ${found.symbol.toUpperCase()}/USDT: $${found.current_price.toLocaleString()} (24h: ${found.price_change_percentage_24h?.toFixed(2)}%)`); else addBotMsg(`Coin "${symbolInput}" not found.`); }
+    else addBotMsg(`I'm here to help! Type /help for commands.`);
   };
 
   return (
@@ -677,8 +734,8 @@ const BotsPage = () => {
                 </div>
                 <div className="flex gap-2"><span className="text-lg font-bold">${currentPrice.toLocaleString()}</span>{selectedPairPrice && <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${selectedPairPrice.price_change_percentage_24h >= 0 ? "bg-profit/10 text-profit" : "bg-loss/10 text-loss"}`}>{selectedPairPrice.price_change_percentage_24h >= 0 ? "+" : ""}{selectedPairPrice.price_change_percentage_24h.toFixed(2)}%</span>}</div>
               </div>
-              {/* Chart area with min-height to ensure visibility */}
-              <div className="flex-1 bg-background p-4 relative min-h-[300px]">
+              {/* Chart area with explicit min-height for wide screens */}
+              <div className="flex-1 bg-background p-4 relative min-h-[400px]">
                 {chartLoading && (
                   <div className="absolute inset-0 flex items-center justify-center bg-background/80 z-10">
                     <RefreshCw className="h-6 w-6 animate-spin text-primary" />
