@@ -4,7 +4,7 @@ import BotStopSummary from "@/components/BotStopSummary";
 import DemoModeBanner from "@/components/DemoModeBanner";
 import DemoModeToggle from "@/components/DemoModeToggle";
 import TradePopup, { emitTradeAlert } from "@/components/TradePopup";
-import { Bot, Search, Zap, Lock, Copy, Users, RotateCw, RefreshCw, Clock, TrendingUp, Activity, BarChart3, ChevronLeft, ChevronDown, ArrowLeft, Info, MessageSquare, Send, X, Wallet, CreditCard } from "lucide-react";
+import { Bot, Search, Zap, Lock, Copy, Users, RotateCw, RefreshCw, Clock, TrendingUp, Activity, BarChart3, ChevronLeft, ChevronDown, ArrowLeft, Info, MessageSquare, Send, X, Wallet, CreditCard, StopCircle, Target, Timer } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useCryptoPrices } from "@/hooks/useCryptoPrices";
@@ -87,6 +87,13 @@ interface ChatMessage {
   type: "bot" | "user" | "system";
 }
 
+interface AutoStopConfig {
+  enabled: boolean;
+  profitTarget?: number;
+  lossLimit?: number;
+  timeLimitMinutes?: number;
+}
+
 const BotsPage = () => {
   const { getSymbol, prices } = useCryptoPrices();
   const { user } = useAuth();
@@ -112,6 +119,12 @@ const BotsPage = () => {
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [chartLoading, setChartLoading] = useState(true);
 
+  // Auto-stop state
+  const [autoStopEnabled, setAutoStopEnabled] = useState(false);
+  const [profitTarget, setProfitTarget] = useState("");
+  const [lossLimit, setLossLimit] = useState("");
+  const [timeLimitMinutes, setTimeLimitMinutes] = useState("");
+
   // Chat state
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
@@ -120,7 +133,7 @@ const BotsPage = () => {
   const [botChatEnabled, setBotChatEnabled] = useState(true);
   const [stopSummary, setStopSummary] = useState<any>(null);
 
-  // Data queries (unchanged)
+  // Data queries
   const { data: usdtWallet, refetch: refetchWallet } = useQuery({
     queryKey: ["usdt_wallet", user?.id],
     queryFn: async () => {
@@ -203,6 +216,57 @@ const BotsPage = () => {
 
   const usdtBalance = Number(usdtWallet?.balance || 0);
 
+  // Auto-stop monitoring effect (checks every 30 seconds)
+  useEffect(() => {
+    if (!myBots.length) return;
+    const interval = setInterval(() => {
+      myBots.forEach((bot: any) => {
+        if (bot.status !== "running") return;
+        const autoStop = bot.config?.autoStop as AutoStopConfig;
+        if (!autoStop?.enabled) return;
+
+        const profit = bot.total_profit || 0;
+        const staked = bot.config?.staked_amount || 0;
+        const profitPct = staked > 0 ? (profit / staked) * 100 : 0;
+        const createdAt = new Date(bot.created_at);
+        const now = new Date();
+        const minutesRunning = (now.getTime() - createdAt.getTime()) / 60000;
+
+        let shouldStop = false;
+        let reason = "";
+
+        if (autoStop.profitTarget && profitPct >= autoStop.profitTarget) {
+          shouldStop = true;
+          reason = `Profit target of ${autoStop.profitTarget}% reached (${profitPct.toFixed(2)}%)`;
+        } else if (autoStop.lossLimit && profitPct <= -autoStop.lossLimit) {
+          shouldStop = true;
+          reason = `Loss limit of ${autoStop.lossLimit}% hit (${profitPct.toFixed(2)}%)`;
+        } else if (autoStop.timeLimitMinutes && minutesRunning >= autoStop.timeLimitMinutes) {
+          shouldStop = true;
+          reason = `Time limit of ${autoStop.timeLimitMinutes} minutes elapsed`;
+        }
+
+        if (shouldStop) {
+          toast.info(`Auto-stopping ${bot.name}: ${reason}`);
+          unstakeBot.mutate(bot);
+        }
+      });
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [myBots]);
+
+  // Auto-navigation: when a new bot appears in myBots and status is running, navigate to its analytics
+  useEffect(() => {
+    if (!myBots.length) return;
+    // Check if there's a bot that was just created (within last 2 seconds) and not yet viewed
+    const now = Date.now();
+    const newBot = myBots.find(b => b.status === "running" && (now - new Date(b.created_at).getTime() < 2000) && !viewingRunningBot);
+    if (newBot) {
+      setViewingRunningBot(newBot);
+      toast.success(`${newBot.name} started! Opening analytics...`);
+    }
+  }, [myBots, viewingRunningBot]);
+
   // Chat: bot trade messages
   useEffect(() => {
     if (!botChatEnabled) return;
@@ -217,7 +281,6 @@ const BotsPage = () => {
     }
   }, [publicTrades, getSymbol, botChatEnabled, chatMessages]);
 
-  // Welcome chat message (fix: ensures welcome appears when chat opens)
   useEffect(() => {
     if (chatOpen && chatMessages.length === 0) {
       setChatMessages([{ id: "welcome", text: "👋 Welcome to Bot Chat! Try /help", timestamp: new Date(), type: "system" }]);
@@ -253,9 +316,9 @@ const BotsPage = () => {
     return () => clearInterval(interval);
   }, [myBots, prices, demoMode, demoBalance, user, getSymbol, setDemoBalance, botChatEnabled]);
 
-  // Stake / unstake mutations (unchanged)
+  // Stake mutation (returns inserted bot data for auto-navigation)
   const stakeBot = useMutation({
-    mutationFn: async ({ bot, amount }: { bot: any; amount: number }) => {
+    mutationFn: async ({ bot, amount, autoStopConfig }: { bot: any; amount: number; autoStopConfig?: AutoStopConfig }) => {
       if (!user) throw new Error("Not authenticated");
       if (demoMode) {
         if (amount < bot.min_stake) throw new Error(`Minimum stake is $${bot.min_stake} USDT`);
@@ -271,13 +334,49 @@ const BotsPage = () => {
         const { error: walletErr } = await supabase.from("wallets").update({ balance: usdtBalance - amount }).eq("id", walletId);
         if (walletErr) throw walletErr;
       }
-      const { error } = await supabase.from("trading_bots").insert({ name: bot.name, crypto_id: bot.crypto_id, strategy: bot.strategy, config: { ...((bot.config as any) || {}), staked_amount: amount }, user_id: user.id, status: "running", tier: bot.tier || "free", description: bot.description || "", is_ai: bot.is_ai || false, min_stake: bot.min_stake || 30, daily_earn: bot.daily_earn || 0 } as any);
+      // Insert bot with auto-stop config stored in config
+      const config = { ...((bot.config as any) || {}), staked_amount: amount, autoStop: autoStopConfig };
+      const { data: newBot, error } = await supabase
+        .from("trading_bots")
+        .insert({
+          name: bot.name,
+          crypto_id: bot.crypto_id,
+          strategy: bot.strategy,
+          config,
+          user_id: user.id,
+          status: "running",
+          tier: bot.tier || "free",
+          description: bot.description || "",
+          is_ai: bot.is_ai || false,
+          min_stake: bot.min_stake || 30,
+          daily_earn: bot.daily_earn || 0
+        } as any)
+        .select()
+        .single();
       if (error) throw error;
       await supabase.from("ledger_entries").insert({ user_id: user.id, crypto_id: "usdt", amount: -amount, entry_type: "bot_stake", description: `Staked $${amount} USDT in ${bot.name}` } as any);
       setChatMessages(prev => [{ id: Date.now().toString(), text: `✅ Staked $${amount} USDT in ${bot.name}. Bot is now running.`, timestamp: new Date(), type: "system" }, ...prev]);
+      return newBot;
     },
-    onSuccess: (_, variables) => { queryClient.invalidateQueries({ queryKey: ["my_bots"] }); queryClient.invalidateQueries({ queryKey: ["usdt_wallet"] }); toast.success("Bot started!"); setSelectedBot(null); setStakeAmount(""); setTimeout(() => queryClient.invalidateQueries({ queryKey: ["my_bots"] }), 1000); },
-    onError: (err: any) => { if (err.message.includes("Insufficient balance")) { toast.error(err.message); setTimeout(() => navigate("/deposit"), 1500); } else toast.error(err.message); },
+    onSuccess: (newBot) => {
+      queryClient.invalidateQueries({ queryKey: ["my_bots"] });
+      queryClient.invalidateQueries({ queryKey: ["usdt_wallet"] });
+      toast.success("Bot started!");
+      setSelectedBot(null);
+      setStakeAmount("");
+      setAutoStopEnabled(false);
+      setProfitTarget("");
+      setLossLimit("");
+      setTimeLimitMinutes("");
+      // Auto-navigate to analytics
+      if (newBot) setViewingRunningBot(newBot);
+    },
+    onError: (err: any) => {
+      if (err.message.includes("Insufficient balance")) {
+        toast.error(err.message);
+        setTimeout(() => navigate("/deposit"), 1500);
+      } else toast.error(err.message);
+    },
   });
 
   const unstakeBot = useMutation({
@@ -355,7 +454,7 @@ const BotsPage = () => {
     return sortedDates.map(date => { cumulative += dailyProfit[date]; return { date, profit: cumulative }; });
   }, [userTrades]);
 
-  // Improved chart loading effect (fix: ensures chart loads on all screen sizes)
+  // Improved chart loading with ResizeObserver for desktop
   useEffect(() => {
     const container = chartRef.current;
     if (!container || !getSymbol(selectedChartPair)) return;
@@ -418,25 +517,18 @@ const BotsPage = () => {
     };
   }, [selectedChartPair, getSymbol]);
 
-  // Chat command handler
-  const handleSendMessage = () => {
-    const msg = chatInput.trim();
-    if (!msg) return;
-    setChatMessages(prev => [{ id: Date.now().toString(), text: msg, timestamp: new Date(), type: "user" }, ...prev]);
-    setChatInput("");
-    const lowerMsg = msg.toLowerCase();
-    const addBotMsg = (text: string) => setChatMessages(prev => [{ id: Date.now().toString(), text, timestamp: new Date(), type: "bot" }, ...prev]);
-    if (lowerMsg === "/status") {
-      const runningBots = myBots.filter((b: any) => b.status === "running");
-      if (runningBots.length === 0) addBotMsg("📊 You have no running bots. Copy a bot from the list to start.");
-      else { const totalProfit = runningBots.reduce((s, b) => s + (b.total_profit || 0), 0); const totalStaked = runningBots.reduce((s, b) => s + (b.config?.staked_amount || 0), 0); addBotMsg(`📊 Bot Status\n- Active: ${runningBots.length}\n- Staked: $${totalStaked.toFixed(2)}\n- Profit: $${totalProfit.toFixed(2)}\n- Balance: $${usdtBalance.toFixed(2)}`); }
-    } else if (lowerMsg === "/help") addBotMsg("🤖 Commands: /status, /bots, /price <coin>, /clear, /toggle");
-    else if (lowerMsg === "/bots") { const botNames = filteredBots.slice(0, 10).map(b => `• ${b.name} (${b.tier || "free"})`).join("\n"); addBotMsg(`**Top bots:**\n${botNames}`); }
-    else if (lowerMsg === "/clear") { setChatMessages([]); addBotMsg("Chat cleared."); }
-    else if (lowerMsg === "/toggle") { setBotChatEnabled(prev => !prev); addBotMsg(`Bot trade messages ${!botChatEnabled ? "enabled ✅" : "disabled ❌"}.`); }
-    else if (lowerMsg.startsWith("/price")) { const symbolInput = msg.split(" ")[1]?.toUpperCase(); const found = prices.find(p => p.symbol.toLowerCase() === symbolInput?.toLowerCase()); if (found) addBotMsg(`💰 ${found.symbol.toUpperCase()}/USDT: $${found.current_price.toLocaleString()} (24h: ${found.price_change_percentage_24h?.toFixed(2)}%)`); else addBotMsg(`Coin "${symbolInput}" not found.`); }
-    else addBotMsg(`I'm here to help! Type /help for commands.`);
-  };
+  // Dropdown close handler
+  useEffect(() => {
+    const handler = (e: MouseEvent) => { if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) setPairDropdownOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  useEffect(() => { if (chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: "smooth" }); }, [chatMessages]);
+
+  const selectedPairPrice = prices.find(p => p.id === selectedChartPair);
+  const currentPrice = selectedPairPrice?.current_price ?? 0;
+  const chartPairName = getSymbol(selectedChartPair) ? `${getSymbol(selectedChartPair)}/USDT` : "BTC/USDT";
 
   // Helper components
   const Sparkline = () => {
@@ -487,10 +579,21 @@ const BotsPage = () => {
     const premium = isPremiumTier(bot);
     const [paymentStep, setPaymentStep] = useState<"info" | "pay" | "monitoring">("info");
     const depositAddress = settings.depositWallets?.["bitcoin"] || settings.depositWallets?.["ethereum"] || "";
+
+    const handleStartBot = () => {
+      if (!canStake && !premium) return;
+      const autoStopConfig: AutoStopConfig | undefined = autoStopEnabled ? {
+        enabled: true,
+        profitTarget: profitTarget ? parseFloat(profitTarget) : undefined,
+        lossLimit: lossLimit ? parseFloat(lossLimit) : undefined,
+        timeLimitMinutes: timeLimitMinutes ? parseInt(timeLimitMinutes) : undefined,
+      } : undefined;
+      stakeBot.mutate({ bot, amount, autoStopConfig });
+    };
+
     return (
       <div className="flex flex-col h-full">
-        <div className="px-4 pt-4 pb-3 border-b"><button onClick={() => { setSelectedBot(null); setStakeAmount(""); }} className="flex gap-2 text-muted-foreground hover:text-foreground mb-2"><ArrowLeft className="h-4 w-4" />Back</button><div><p className="text-[11px] text-muted-foreground">{stratLabel}</p><h2 className="text-lg font-bold">{pair}</h2></div></div>
-        {/* Added style={{ overflowAnchor: 'none' }} to prevent scroll jumping */}
+        <div className="px-4 pt-4 pb-3 border-b"><button onClick={() => { setSelectedBot(null); setStakeAmount(""); setAutoStopEnabled(false); setProfitTarget(""); setLossLimit(""); setTimeLimitMinutes(""); }} className="flex gap-2 text-muted-foreground hover:text-foreground mb-2"><ArrowLeft className="h-4 w-4" />Back</button><div><p className="text-[11px] text-muted-foreground">{stratLabel}</p><h2 className="text-lg font-bold">{pair}</h2></div></div>
         <div className="flex-1 overflow-y-auto" style={{ overflowAnchor: 'none' }}>
           <div className="mx-4 mt-3 p-3 bg-profit/10 border border-profit/20 rounded-lg"><p className="text-[11px] text-profit flex gap-1.5"><Info className="h-3.5 w-3.5 shrink-0" />{premium && !demoMode ? "Premium bot requires a deposit to activate." : "Shared parameter bot."}</p></div>
           <div className="mx-4 mt-4"><h3 className="text-sm font-bold mb-2">Basic Info</h3><div className="bg-secondary/50 rounded-lg border divide-y">{[
@@ -502,6 +605,22 @@ const BotsPage = () => {
             { label: "Min. Stake", value: `$${bot.min_stake.toFixed(2)} USDT`, color: "" },
             { label: "Tier", value: (bot.tier || "free").charAt(0).toUpperCase() + (bot.tier || "free").slice(1), color: premium ? "text-primary font-semibold" : "" },
           ].map(row => (<div key={row.label} className="flex justify-between px-3 py-2.5"><span className="text-xs text-muted-foreground">{row.label}</span><span className={`text-xs font-medium ${row.color}`}>{row.value}</span></div>))}</div></div>
+
+          {/* Auto-stop configuration */}
+          <div className="mx-4 mt-4">
+            <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
+              <input type="checkbox" checked={autoStopEnabled} onChange={(e) => setAutoStopEnabled(e.target.checked)} className="rounded border-border" />
+              <StopCircle className="h-4 w-4 text-destructive" /> Auto-stop bot
+            </label>
+            {autoStopEnabled && (
+              <div className="mt-2 space-y-3 p-3 bg-secondary/30 rounded-lg">
+                <div><label className="text-xs text-muted-foreground">Profit target (%)</label><input type="number" value={profitTarget} onChange={e => setProfitTarget(e.target.value)} placeholder="e.g., 20" className="w-full mt-1 h-8 px-2 rounded-md bg-secondary border border-border text-sm" /></div>
+                <div><label className="text-xs text-muted-foreground">Loss limit (%)</label><input type="number" value={lossLimit} onChange={e => setLossLimit(e.target.value)} placeholder="e.g., 10" className="w-full mt-1 h-8 px-2 rounded-md bg-secondary border border-border text-sm" /></div>
+                <div><label className="text-xs text-muted-foreground">Time limit (minutes)</label><input type="number" value={timeLimitMinutes} onChange={e => setTimeLimitMinutes(e.target.value)} placeholder="e.g., 120" className="w-full mt-1 h-8 px-2 rounded-md bg-secondary border border-border text-sm" /></div>
+              </div>
+            )}
+          </div>
+
           {premium && !demoMode && paymentStep === "pay" ? (
             <div className="mx-4 mt-4 mb-4 p-4 border border-primary/30 rounded-xl"><div className="flex gap-2 mb-3"><Wallet className="h-4 w-4 text-primary" /><h3 className="text-sm font-bold">Send Payment</h3></div><p className="text-xs mb-3">Send <span className="font-bold">${stakeAmount || bot.min_stake} USDT</span> to:</p><div className="flex justify-center mb-3"><div className="bg-white p-2 rounded-lg"><QRCodeSVG value={depositAddress} size={120} /></div></div><div className="bg-secondary p-3 rounded-lg mb-3"><p className="text-[10px] mb-1">Address</p><p className="text-xs font-mono break-all">{depositAddress}</p></div><button onClick={() => { navigator.clipboard.writeText(depositAddress); toast.success("Copied!"); }} className="w-full text-xs py-2 rounded-lg bg-primary/10 text-primary mb-3">Copy</button><p className="text-[10px] text-center">After sending, click "I've Paid".</p></div>
           ) : (
@@ -512,7 +631,7 @@ const BotsPage = () => {
           {premium && !demoMode && paymentStep === "pay" ? (<Button className="w-full h-12 bg-primary" onClick={() => { toast.success("Verifying..."); setPaymentStep("monitoring"); setTimeout(() => { stakeBot.mutate({ bot, amount: Number(stakeAmount) || bot.min_stake }); setPaymentStep("info"); }, 3000); }}><CreditCard className="mr-2" /> I've Paid</Button>) :
           premium && !demoMode && paymentStep === "monitoring" ? (<Button disabled><RefreshCw className="animate-spin mr-2" /> Verifying</Button>) :
           premium && !demoMode ? (<Button className="w-full h-12 bg-profit" disabled={amount < bot.min_stake} onClick={() => setPaymentStep("pay")}>{amount >= bot.min_stake ? `Pay $${amount.toFixed(2)}` : "Enter amount"}</Button>) :
-          (<Button className="w-full h-12 bg-profit hover:bg-profit/90 text-white font-bold text-base" disabled={!canStake || stakeBot.isPending} onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (canStake && !stakeBot.isPending) stakeBot.mutate({ bot, amount }); }}>{stakeBot.isPending ? "Processing..." : canStake ? `Start Bot — $${amount.toFixed(2)}` : amount > 0 ? "Amount too low" : "Enter amount"}</Button>)}
+          (<Button className="w-full h-12 bg-profit hover:bg-profit/90 text-white font-bold text-base" disabled={!canStake || stakeBot.isPending} onClick={handleStartBot}>{stakeBot.isPending ? "Processing..." : canStake ? `Start Bot — $${amount.toFixed(2)}` : amount > 0 ? "Amount too low" : "Enter amount"}</Button>)}
           <p className="text-[10px] text-center mt-2">By clicking, you agree to terms.</p>
         </div>
       </div>
@@ -524,22 +643,13 @@ const BotsPage = () => {
     if (!canAccessTier(botTier) && !demoMode) { toast.error(`Upgrade to ${botTier} tier to use this bot.`); return; }
     setSelectedBot(bot);
     setSelectedChartPair(bot.crypto_id);
+    // Reset auto-stop form
+    setAutoStopEnabled(false);
+    setProfitTarget("");
+    setLossLimit("");
+    setTimeLimitMinutes("");
   };
 
-  // Helper to close dropdown
-  useEffect(() => {
-    const handler = (e: MouseEvent) => { if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) setPairDropdownOpen(false); };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
-
-  useEffect(() => { if (chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: "smooth" }); }, [chatMessages]);
-
-  const selectedPairPrice = prices.find(p => p.id === selectedChartPair);
-  const currentPrice = selectedPairPrice?.current_price ?? 0;
-  const chartPairName = getSymbol(selectedChartPair) ? `${getSymbol(selectedChartPair)}/USDT` : "BTC/USDT";
-
-  // Render
   return (
     <DashboardLayout>
       <TradePopup />
@@ -567,18 +677,18 @@ const BotsPage = () => {
                 </div>
                 <div className="flex gap-2"><span className="text-lg font-bold">${currentPrice.toLocaleString()}</span>{selectedPairPrice && <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${selectedPairPrice.price_change_percentage_24h >= 0 ? "bg-profit/10 text-profit" : "bg-loss/10 text-loss"}`}>{selectedPairPrice.price_change_percentage_24h >= 0 ? "+" : ""}{selectedPairPrice.price_change_percentage_24h.toFixed(2)}%</span>}</div>
               </div>
-              {/* Chart area with loading spinner */}
-              <div className="flex-1 bg-background p-4 relative">
+              {/* Chart area with min-height to ensure visibility */}
+              <div className="flex-1 bg-background p-4 relative min-h-[300px]">
                 {chartLoading && (
                   <div className="absolute inset-0 flex items-center justify-center bg-background/80 z-10">
                     <RefreshCw className="h-6 w-6 animate-spin text-primary" />
                   </div>
                 )}
-                <div ref={chartRef} className="w-full h-full min-h-[300px]" />
+                <div ref={chartRef} className="w-full h-full" />
               </div>
               <div className="border-t bg-card"><div className="flex gap-6 px-4 overflow-x-auto">{(["running","history","pnl"] as const).map(t => (<button key={t} className={`py-3 text-sm font-medium border-b-2 ${bottomTab === t ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`} onClick={() => setBottomTab(t)}>{t === "running" ? "Running" : t === "history" ? "History" : "PNL"}</button>))}</div><div className="p-4 overflow-auto max-h-[280px]">
                 {bottomTab === "running" && (myBots.filter(b => b.status === "running").length === 0 ? <div className="text-center py-8 text-sm">No bots running.</div> : <div className="space-y-2">{myBots.filter(b => b.status === "running").map(bot => (<div key={bot.id} className="flex justify-between items-center p-3 bg-secondary/50 rounded-lg cursor-pointer" onClick={() => setViewingRunningBot(bot)}><div><p className="text-sm font-medium">{bot.name}</p><p className="text-[11px] text-muted-foreground">{getSymbol(bot.crypto_id)}/USDT • Staked: ${(bot.config?.staked_amount || 0).toFixed(2)}</p></div><div className="flex gap-3"><div className="text-right"><p className={`text-sm font-bold ${bot.total_profit >= 0 ? "text-profit" : "text-loss"}`}>{bot.total_profit >= 0 ? "+" : ""}${bot.total_profit.toFixed(2)}</p><p className="text-[10px]">{bot.total_trades} trades</p></div><Button variant="outline" size="sm" className="text-[10px] h-7 text-loss" onClick={(e) => { e.stopPropagation(); if (confirm("Stop bot?")) unstakeBot.mutate(bot); }}>Unstake</Button></div></div>))}</div>)}
-                {bottomTab === "history" && (userTrades.length === 0 ? <p className="text-center text-sm">No trade history.</p> : <div className="overflow-x-auto"><table className="w-full text-xs"><thead><tr className="text-muted-foreground"><th className="text-left py-2">Pair</th><th>Side</th><th className="text-right">Price</th><th className="text-right">Amount</th><th className="text-right">PNL</th><th className="text-right">Time</th> </tr></thead><tbody>{userTrades.slice(0,20).map(t => (<tr key={t.id}><td>{getSymbol(t.crypto_id)}/USDT</td><td className={t.side==="buy"?"text-profit":"text-loss"}>{t.side}</td><td className="text-right">${Number(t.price).toLocaleString()}</td><td className="text-right">{Number(t.amount).toFixed(4)}</td><td className={`text-right ${(t.pnl||0)>=0?"text-profit":"text-loss"}`}>${(t.pnl||0).toFixed(2)}</td><td className="text-right text-muted-foreground">{new Date(t.created_at).toLocaleTimeString()}</td></tr>))}</tbody></table></div>)}
+                {bottomTab === "history" && (userTrades.length === 0 ? <p className="text-center text-sm">No trade history.</p> : <div className="overflow-x-auto"><table className="w-full text-xs"><thead><tr className="text-muted-foreground"><th className="text-left py-2">Pair</th><th>Side</th><th className="text-right">Price</th><th className="text-right">Amount</th><th className="text-right">PNL</th><th className="text-right">Time</th></tr></thead><tbody>{userTrades.slice(0,20).map(t => (<tr key={t.id}><td>{getSymbol(t.crypto_id)}/USDT</td><td className={t.side==="buy"?"text-profit":"text-loss"}>{t.side}</td><td className="text-right">${Number(t.price).toLocaleString()}</td><td className="text-right">{Number(t.amount).toFixed(4)}</td><td className={`text-right ${(t.pnl||0)>=0?"text-profit":"text-loss"}`}>${(t.pnl||0).toFixed(2)}</td><td className="text-right text-muted-foreground">{new Date(t.created_at).toLocaleTimeString()}</td></tr>))}</tbody></table></div>)}
                 {bottomTab === "pnl" && (pnlChartData.length === 0 ? <div className="text-center py-8"><BarChart3 className="h-8 w-8 mx-auto opacity-30" /><p>No PNL data yet.</p></div> : <div className="h-64"><ResponsiveContainer><LineChart data={pnlChartData}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="date" /><YAxis /><Tooltip /><Line type="monotone" dataKey="profit" stroke="#22c55e" strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></div>)}
               </div></div>
             </div>
