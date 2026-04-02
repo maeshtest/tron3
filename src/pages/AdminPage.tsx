@@ -266,6 +266,10 @@ const AdminPage = () => {
   const [localMaintenance, setLocalMaintenance] = useState(settings.maintenance_mode || false);
   const [localReferralBonus, setLocalReferralBonus] = useState(settings.referral_bonus_percent || 10);
   const [localResendKey, setLocalResendKey] = useState((settings as any).resend_api_key || "");
+  const [localKopoClientId, setLocalKopoClientId] = useState((settings as any).kopokopo_client_id || "");
+  const [localKopoClientSecret, setLocalKopoClientSecret] = useState((settings as any).kopokopo_client_secret || "");
+  const [localKopoTill, setLocalKopoTill] = useState((settings as any).kopokopo_till_number || "");
+  const [localKopoBaseUrl, setLocalKopoBaseUrl] = useState((settings as any).kopokopo_api_base_url || "https://sandbox.kopokopo.com");
 
   // Bot creation state
   const [newBotName, setNewBotName] = useState("");
