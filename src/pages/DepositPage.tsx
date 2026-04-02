@@ -9,6 +9,8 @@ import { useSiteSettingsDB } from "@/hooks/useSiteSettingsDB";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { QRCodeSVG } from "qrcode.react";
+import DepositMethodSelector from "@/components/deposit/DepositMethodSelector";
+import MpesaDepositForm from "@/components/deposit/MpesaDepositForm";
 
 const COIN_META: Record<string, { symbol: string; name: string; color: string; networks: string[] }> = {
   tether: { symbol: "USDT", name: "Tether", color: "#26A17B", networks: ["TRC-20", "ERC-20"] },
@@ -28,6 +30,7 @@ const MIN_USDT_EQUIVALENT = 20;
 
 const DepositPage = () => {
   const { settings, isLoading: settingsLoading } = useSiteSettingsDB();
+  const [depositMethod, setDepositMethod] = useState<"choose" | "crypto" | "fiat">("choose");
   const { prices } = useCryptoPrices();
   const { user } = useAuth();
   const { fetchWallets } = useWallets();
@@ -240,9 +243,27 @@ const DepositPage = () => {
   return (
     <DashboardLayout>
       <div className="max-w-lg mx-auto p-4 md:p-6 space-y-6">
+        {/* Method Selection */}
+        {depositMethod === "choose" && (
+          <DepositMethodSelector onSelect={(method) => setDepositMethod(method)} />
+        )}
+
+        {/* M-PESA / Fiat */}
+        {depositMethod === "fiat" && (
+          <MpesaDepositForm onBack={() => setDepositMethod("choose")} />
+        )}
+
+        {/* Crypto Deposit (existing flow) */}
+        {depositMethod === "crypto" && (
+          <>
+        <div className="flex items-center gap-2 mb-2">
+          <button onClick={() => { setDepositMethod("choose"); resetFlow(); }} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
+            <ArrowLeft className="h-4 w-4" /> Back
+          </button>
+        </div>
         {/* Header */}
         <div className="text-center">
-          <h1 className="text-2xl font-bold text-foreground">Deposit Funds</h1>
+          <h1 className="text-2xl font-bold text-foreground">Crypto Deposit</h1>
           <p className="text-sm text-muted-foreground">Choose a currency and complete the deposit</p>
         </div>
 
