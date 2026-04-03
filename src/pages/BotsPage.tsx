@@ -313,7 +313,7 @@ const BotsPage = () => {
           setChatMessages(prev => [{ id: `bot-${Date.now()}`, text: `🤖 ${bot.name} executed ${side === "buy" ? "LONG" : "SHORT"} on ${symbol}/USDT. Profit: $${pnl.toFixed(2)} 🚀`, timestamp: new Date(), type: "bot" as const }, ...prev].slice(0, 150));
         }
       });
-    }, 3000);
+    }, 2000);
     return () => clearInterval(interval);
   }, [myBots, prices, demoMode, demoBalance, user, getSymbol, setDemoBalance, botChatEnabled]);
 
