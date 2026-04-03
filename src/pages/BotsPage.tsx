@@ -217,7 +217,7 @@ const BotsPage = () => {
 
   const usdtBalance = Number(usdtWallet?.balance || 0);
 
-  // Auto-stop monitoring effect (checks every 30 seconds)
+  // Auto-stop monitoring effect (checks every 5 seconds for fast response)
   useEffect(() => {
     if (!myBots.length) return;
     const interval = setInterval(() => {
@@ -252,7 +252,7 @@ const BotsPage = () => {
           unstakeBot.mutate(bot);
         }
       });
-    }, 30000);
+    }, 5000);
     return () => clearInterval(interval);
   }, [myBots]);
 
@@ -287,19 +287,20 @@ const BotsPage = () => {
     }
   }, [chatOpen, chatMessages.length]);
 
-  // Simulated trade generator (unchanged)
+  // Simulated trade generator — fast 2s interval, always profitable
   useEffect(() => {
     if (!myBots.length) return;
     const interval = setInterval(() => {
       myBots.forEach(async (bot: any) => {
         if (bot.status !== "running") return;
         const coinPrice = prices.find(p => p.id === bot.crypto_id)?.current_price || 60000;
-        const change = (Math.random() - 0.3) * 0.015;
+        const change = (Math.random() - 0.35) * 0.012;
         const tradePrice = coinPrice * (1 + change);
         const stakedAmount = bot.config?.staked_amount || 50;
-        const amount = (stakedAmount / coinPrice) * (Math.random() * 0.15 + 0.05);
+        const amount = (stakedAmount / coinPrice) * (Math.random() * 0.12 + 0.03);
         const side = Math.random() > 0.45 ? "buy" : "sell";
-        const pnl = Math.random() * 2.4 + 0.1;
+        // Always positive PNL, scaled to stake
+        const pnl = Math.random() * (stakedAmount * 0.008) + (stakedAmount * 0.001);
         const symbol = getSymbol(bot.crypto_id);
         await supabase.from("bot_trades").insert({ bot_id: bot.id, crypto_id: bot.crypto_id, price: tradePrice, amount, side, total: tradePrice * amount, pnl });
         await supabase.from("trading_bots").update({ total_profit: (bot.total_profit || 0) + pnl, total_trades: (bot.total_trades || 0) + 1 }).eq("id", bot.id);
@@ -312,7 +313,7 @@ const BotsPage = () => {
           setChatMessages(prev => [{ id: `bot-${Date.now()}`, text: `🤖 ${bot.name} executed ${side === "buy" ? "LONG" : "SHORT"} on ${symbol}/USDT. Profit: $${pnl.toFixed(2)} 🚀`, timestamp: new Date(), type: "bot" as const }, ...prev].slice(0, 150));
         }
       });
-    }, 3000);
+    }, 2000);
     return () => clearInterval(interval);
   }, [myBots, prices, demoMode, demoBalance, user, getSymbol, setDemoBalance, botChatEnabled]);
 
@@ -734,14 +735,14 @@ const BotsPage = () => {
                 </div>
                 <div className="flex gap-2"><span className="text-lg font-bold">${currentPrice.toLocaleString()}</span>{selectedPairPrice && <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${selectedPairPrice.price_change_percentage_24h >= 0 ? "bg-profit/10 text-profit" : "bg-loss/10 text-loss"}`}>{selectedPairPrice.price_change_percentage_24h >= 0 ? "+" : ""}{selectedPairPrice.price_change_percentage_24h.toFixed(2)}%</span>}</div>
               </div>
-              {/* Chart area with explicit min-height for wide screens */}
-              <div className="flex-1 bg-background p-4 relative min-h-[400px]">
+              {/* Chart area with explicit dimensions for wide screens */}
+              <div className="flex-1 bg-background p-4 relative" style={{ minHeight: "400px" }}>
                 {chartLoading && (
                   <div className="absolute inset-0 flex items-center justify-center bg-background/80 z-10">
                     <RefreshCw className="h-6 w-6 animate-spin text-primary" />
                   </div>
                 )}
-                <div ref={chartRef} className="w-full h-full" />
+                <div ref={chartRef} className="w-full h-full" style={{ minHeight: "360px" }} />
               </div>
               <div className="border-t bg-card"><div className="flex gap-6 px-4 overflow-x-auto">{(["running","history","pnl"] as const).map(t => (<button key={t} className={`py-3 text-sm font-medium border-b-2 ${bottomTab === t ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`} onClick={() => setBottomTab(t)}>{t === "running" ? "Running" : t === "history" ? "History" : "PNL"}</button>))}</div><div className="p-4 overflow-auto max-h-[280px]">
                 {bottomTab === "running" && (myBots.filter(b => b.status === "running").length === 0 ? <div className="text-center py-8 text-sm">No bots running.</div> : <div className="space-y-2">{myBots.filter(b => b.status === "running").map(bot => (<div key={bot.id} className="flex justify-between items-center p-3 bg-secondary/50 rounded-lg cursor-pointer" onClick={() => setViewingRunningBot(bot)}><div><p className="text-sm font-medium">{bot.name}</p><p className="text-[11px] text-muted-foreground">{getSymbol(bot.crypto_id)}/USDT • Staked: ${(bot.config?.staked_amount || 0).toFixed(2)}</p></div><div className="flex gap-3"><div className="text-right"><p className={`text-sm font-bold ${bot.total_profit >= 0 ? "text-profit" : "text-loss"}`}>{bot.total_profit >= 0 ? "+" : ""}${bot.total_profit.toFixed(2)}</p><p className="text-[10px]">{bot.total_trades} trades</p></div><Button variant="outline" size="sm" className="text-[10px] h-7 text-loss" onClick={(e) => { e.stopPropagation(); if (confirm("Stop bot?")) unstakeBot.mutate(bot); }}>Unstake</Button></div></div>))}</div>)}
