@@ -76,7 +76,7 @@ export default function MpesaWithdrawForm({ onBack }: Props) {
       // For now, the transaction stays pending for admin approval
       toast.success("Withdrawal request submitted!");
       setStep("pending");
-      refetchWallets();
+      fetchWallets();
 
       // Poll for status
       let attempts = 0;
