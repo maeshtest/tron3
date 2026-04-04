@@ -119,8 +119,6 @@ const BotsPage = () => {
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [chartLoading, setChartLoading] = useState(true);
   const [chartError, setChartError] = useState(false);
-  const loadRetryCount = useRef(0);
-  const loadTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Auto-stop state
   const [autoStopEnabled, setAutoStopEnabled] = useState(false);
