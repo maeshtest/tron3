@@ -659,14 +659,20 @@ const BotsPage = () => {
               <div className="relative">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-foreground">$</span>
                 <input
-                  type="number"
+                  type="text"
                   inputMode="decimal"
-                  min={0}
-                  step="0.01"
                   value={stakeAmount}
-                  onChange={e => setStakeAmount(e.target.value)}
+                  onChange={e => {
+                    const v = e.target.value;
+                    if (v === "" || /^\d*\.?\d*$/.test(v)) setStakeAmount(v);
+                  }}
+                  onFocus={e => {
+                    e.target.scrollIntoView({ behavior: "smooth", block: "center" });
+                    e.preventDefault();
+                  }}
                   placeholder={bot.min_stake.toFixed(2)}
-                  className="w-full h-14 pl-7 pr-16 rounded-lg bg-secondary border border-border text-xl font-semibold text-foreground focus:outline-none focus:border-primary [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  className="w-full h-14 pl-7 pr-16 rounded-lg bg-secondary border border-border text-xl font-semibold text-foreground focus:outline-none focus:border-primary"
+                  autoComplete="off"
                 />
                 <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">USDT</span>
               </div>
