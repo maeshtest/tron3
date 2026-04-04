@@ -4,18 +4,19 @@ import BotStopSummary from "@/components/BotStopSummary";
 import DemoModeBanner from "@/components/DemoModeBanner";
 import DemoModeToggle from "@/components/DemoModeToggle";
 import TradePopup, { emitTradeAlert } from "@/components/TradePopup";
-import { Bot, Search, Zap, Lock, Copy, Users, RotateCw, RefreshCw, Clock, TrendingUp, Activity, BarChart3, ChevronLeft, ChevronDown, ArrowLeft, Info, MessageSquare, Send, X, Wallet, CreditCard, StopCircle, Target, Timer } from "lucide-react";
+import { Bot, Search, Zap, Lock, Copy, Users, RotateCw, RefreshCw, Clock, TrendingUp, Activity, BarChart3, ChevronLeft, ChevronDown, ArrowLeft, Info, MessageSquare, Send, X, Wallet, CreditCard, StopCircle, Target, Timer, HelpCircle } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useCryptoPrices } from "@/hooks/useCryptoPrices";
 import { useAuth } from "@/contexts/AuthContext";
 import { useProfile } from "@/hooks/useProfile";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { Link, useNavigate } from "react-router-dom";
 import { useAppStore } from "@/stores/useAppStore";
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from "recharts";
 import { useSiteSettings } from "@/hooks/useSiteSettings";
 import { QRCodeSVG } from "qrcode.react";
 
@@ -111,16 +112,12 @@ const BotsPage = () => {
   const [selectedBot, setSelectedBot] = useState<any>(null);
   const [viewingRunningBot, setViewingRunningBot] = useState<any>(null);
   const [stakeAmount, setStakeAmount] = useState("");
-  const [showParams, setShowParams] = useState(false);
   const [pairDropdownOpen, setPairDropdownOpen] = useState(false);
   const [pairSearch, setPairSearch] = useState("");
   const [selectedChartPair, setSelectedChartPair] = useState("bitcoin");
   const chartRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [chartLoading, setChartLoading] = useState(true);
-  const [chartError, setChartError] = useState(false);
-  const loadRetryCount = useRef(0);
-  const loadTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Auto-stop state
   const [autoStopEnabled, setAutoStopEnabled] = useState(false);
@@ -219,7 +216,7 @@ const BotsPage = () => {
 
   const usdtBalance = Number(usdtWallet?.balance || 0);
 
-  // Auto-stop monitoring effect (checks every 5 seconds for fast response)
+  // Auto-stop monitoring effect
   useEffect(() => {
     if (!myBots.length) return;
     const interval = setInterval(() => {
@@ -258,7 +255,7 @@ const BotsPage = () => {
     return () => clearInterval(interval);
   }, [myBots]);
 
-  // Auto-navigation: when a new bot appears in myBots and status is running, navigate to its analytics
+  // Auto-navigation
   useEffect(() => {
     if (!myBots.length) return;
     const now = Date.now();
@@ -289,7 +286,7 @@ const BotsPage = () => {
     }
   }, [chatOpen, chatMessages.length]);
 
-  // Simulated trade generator — fast 2s interval, always profitable
+  // Simulated trade generator
   useEffect(() => {
     if (!myBots.length) return;
     const interval = setInterval(() => {
@@ -301,7 +298,6 @@ const BotsPage = () => {
         const stakedAmount = bot.config?.staked_amount || 50;
         const amount = (stakedAmount / coinPrice) * (Math.random() * 0.12 + 0.03);
         const side = Math.random() > 0.45 ? "buy" : "sell";
-        // Always positive PNL, scaled to stake
         const pnl = Math.random() * (stakedAmount * 0.008) + (stakedAmount * 0.001);
         const symbol = getSymbol(bot.crypto_id);
         await supabase.from("bot_trades").insert({ bot_id: bot.id, crypto_id: bot.crypto_id, price: tradePrice, amount, side, total: tradePrice * amount, pnl });
@@ -319,7 +315,7 @@ const BotsPage = () => {
     return () => clearInterval(interval);
   }, [myBots, prices, demoMode, demoBalance, user, getSymbol, setDemoBalance, botChatEnabled]);
 
-  // Stake mutation (returns inserted bot data for auto-navigation)
+  // Stake mutation
   const stakeBot = useMutation({
     mutationFn: async ({ bot, amount, autoStopConfig }: { bot: any; amount: number; autoStopConfig?: AutoStopConfig }) => {
       if (!user) throw new Error("Not authenticated");
@@ -337,7 +333,6 @@ const BotsPage = () => {
         const { error: walletErr } = await supabase.from("wallets").update({ balance: usdtBalance - amount }).eq("id", walletId);
         if (walletErr) throw walletErr;
       }
-      // Insert bot with auto-stop config stored in config
       const config = { ...((bot.config as any) || {}), staked_amount: amount, autoStop: autoStopConfig };
       const { data: newBot, error } = await supabase
         .from("trading_bots")
@@ -371,7 +366,6 @@ const BotsPage = () => {
       setProfitTarget("");
       setLossLimit("");
       setTimeLimitMinutes("");
-      // Auto-navigate to analytics
       if (newBot) setViewingRunningBot(newBot);
     },
     onError: (err: any) => {
@@ -394,7 +388,6 @@ const BotsPage = () => {
       await supabase.from("ledger_entries").insert({ user_id: user.id, crypto_id: "usdt", amount: returnAmount, entry_type: "bot_unstake", description: `Unstaked $${stakedAmount.toFixed(2)} + $${profit.toFixed(2)} profit from ${bot.name}` } as any);
       await supabase.from("trading_bots").delete().eq("id", bot.id);
       setChatMessages(prev => [{ id: Date.now().toString(), text: `🛑 Unstaked ${bot.name}. Returned $${returnAmount.toFixed(2)} USDT.`, timestamp: new Date(), type: "system" as const }, ...prev]);
-      // Show stop summary
       const ms = Date.now() - new Date(bot.created_at).getTime();
       const days = Math.floor(ms / 86400000);
       const hours = Math.floor((ms % 86400000) / 3600000);
@@ -457,91 +450,35 @@ const BotsPage = () => {
     return sortedDates.map(date => { cumulative += dailyProfit[date]; return { date, profit: cumulative }; });
   }, [userTrades]);
 
-  // Robust TradingView chart loader (fixes wide screen issue and prevents scroll jumps)
+  // TradingView chart - SIMPLE & RELIABLE (copied from FuturesPage)
   useEffect(() => {
-    const container = chartRef.current;
-    if (!container || !getSymbol(selectedChartPair)) return;
-
-    // Clear previous widget and reset states
-    while (container.firstChild) container.removeChild(container.firstChild);
+    if (!chartRef.current || !getSymbol(selectedChartPair)) return;
+    // Clear previous content
+    while (chartRef.current.firstChild) {
+      chartRef.current.removeChild(chartRef.current.firstChild);
+    }
     setChartLoading(true);
-    setChartError(false);
-    loadRetryCount.current = 0;
-    if (loadTimeoutRef.current) clearTimeout(loadTimeoutRef.current);
-
-    let isMounted = true;
-    let resizeObserver: ResizeObserver | null = null;
-
-    const loadWidget = () => {
-      if (!isMounted) return;
-      // Container must have positive dimensions
-      const width = container.clientWidth;
-      const height = container.clientHeight;
-      if (width === 0 || height === 0) {
-        if (loadRetryCount.current < 10) {
-          loadRetryCount.current++;
-          loadTimeoutRef.current = setTimeout(loadWidget, 150);
-        } else {
-          setChartLoading(false);
-          setChartError(true);
-        }
-        return;
-      }
-
-      // Create TradingView script
-      const script = document.createElement("script");
-      script.src = "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
-      script.type = "text/javascript";
-      script.async = true;
-      script.innerHTML = JSON.stringify({
-        autosize: true,
-        symbol: `BINANCE:${getSymbol(selectedChartPair)}USDT`,
-        interval: "15",
-        timezone: "Etc/UTC",
-        theme: document.documentElement.classList.contains("dark") ? "dark" : "light",
-        style: "1",
-        locale: "en",
-        allow_symbol_change: false,
-        support_host: "https://www.tradingview.com"
-      });
-      script.onload = () => {
-        if (isMounted) {
-          setChartLoading(false);
-          setChartError(false);
-        }
-      };
-      script.onerror = () => {
-        if (isMounted) {
-          setChartLoading(false);
-          setChartError(true);
-        }
-      };
-      container.appendChild(script);
-    };
-
-    // Use ResizeObserver to detect when container gets dimensions
-    resizeObserver = new ResizeObserver(() => {
-      if (container.clientWidth > 0 && container.clientHeight > 0) {
-        resizeObserver?.disconnect();
-        loadWidget();
-      }
+    const script = document.createElement("script");
+    script.src = "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
+    script.type = "text/javascript";
+    script.async = true;
+    script.innerHTML = JSON.stringify({
+      autosize: true,
+      symbol: `BINANCE:${getSymbol(selectedChartPair)}USDT`,
+      interval: "15",
+      timezone: "Etc/UTC",
+      theme: document.documentElement.classList.contains("dark") ? "dark" : "light",
+      style: "1",
+      locale: "en",
+      allow_symbol_change: false,
+      support_host: "https://www.tradingview.com",
     });
-    resizeObserver.observe(container);
-
-    // Fallback: if observer never fires, try loading after 1 second
-    loadTimeoutRef.current = setTimeout(() => {
-      if (isMounted && (container.clientWidth === 0 || container.clientHeight === 0)) {
-        resizeObserver?.disconnect();
-        loadWidget();
-      }
-    }, 1000);
-
-    return () => {
-      isMounted = false;
-      if (resizeObserver) resizeObserver.disconnect();
-      if (loadTimeoutRef.current) clearTimeout(loadTimeoutRef.current);
-      if (container) container.innerHTML = "";
+    script.onload = () => setChartLoading(false);
+    script.onerror = () => {
+      setChartLoading(false);
+      toast.error("Failed to load chart");
     };
+    chartRef.current.appendChild(script);
   }, [selectedChartPair, getSymbol]);
 
   // Dropdown close handler
@@ -572,7 +509,7 @@ const BotsPage = () => {
     const runtime = formatRuntime(bot.created_at);
     const locked = !canAccessTier(tier) && !demoMode;
     return (
-      <div className={`bg-card border border-border rounded-xl p-3 relative overflow-hidden cursor-pointer hover:border-primary/30 transition-colors ${locked ? "opacity-70" : ""}`} onClick={() => handleSelectBot(bot)}>
+      <div className={`bg-card border border-border rounded-xl p-3 relative overflow-hidden cursor-pointer hover:border-primary/30 transition-all ${locked ? "opacity-70" : ""}`} onClick={() => handleSelectBot(bot)}>
         {locked && <div className="absolute inset-0 bg-background/60 backdrop-blur-[2px] z-10 flex items-center justify-center"><Lock className="h-5 w-5 text-muted-foreground" /><span className="text-[10px] font-bold">Upgrade to {tier}</span></div>}
         <div className="flex items-center gap-1.5 mb-3 flex-wrap">
           <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${TIER_COLORS[tier]}`}>{stratLabel}</span>
@@ -636,17 +573,36 @@ const BotsPage = () => {
             { label: "Tier", value: (bot.tier || "free").charAt(0).toUpperCase() + (bot.tier || "free").slice(1), color: premium ? "text-primary font-semibold" : "" },
           ].map(row => (<div key={row.label} className="flex justify-between px-3 py-2.5"><span className="text-xs text-muted-foreground">{row.label}</span><span className={`text-xs font-medium ${row.color}`}>{row.value}</span></div>))}</div></div>
 
-          {/* Auto-stop configuration */}
-          <div>
-            <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
-              <input type="checkbox" checked={autoStopEnabled} onChange={(e) => setAutoStopEnabled(e.target.checked)} className="rounded border-border" />
-              <StopCircle className="h-4 w-4 text-destructive" /> Auto-stop bot
-            </label>
+          {/* Auto-stop configuration - improved layout */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
+                <input type="checkbox" checked={autoStopEnabled} onChange={(e) => setAutoStopEnabled(e.target.checked)} className="rounded border-border" />
+                <StopCircle className="h-4 w-4 text-destructive" /> Auto-stop bot
+              </label>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <HelpCircle className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
+                  </TooltipTrigger>
+                  <TooltipContent>Automatically stop bot when profit/loss or time limit is reached</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
             {autoStopEnabled && (
-              <div className="mt-2 space-y-3 p-3 bg-secondary/30 rounded-lg">
-                <div><label className="text-xs text-muted-foreground">Profit target (%)</label><input type="number" value={profitTarget} onChange={e => setProfitTarget(e.target.value)} placeholder="e.g., 20" className="w-full mt-1 h-8 px-2 rounded-md bg-secondary border border-border text-sm" /></div>
-                <div><label className="text-xs text-muted-foreground">Loss limit (%)</label><input type="number" value={lossLimit} onChange={e => setLossLimit(e.target.value)} placeholder="e.g., 10" className="w-full mt-1 h-8 px-2 rounded-md bg-secondary border border-border text-sm" /></div>
-                <div><label className="text-xs text-muted-foreground">Time limit (minutes)</label><input type="number" value={timeLimitMinutes} onChange={e => setTimeLimitMinutes(e.target.value)} placeholder="e.g., 120" className="w-full mt-1 h-8 px-2 rounded-md bg-secondary border border-border text-sm" /></div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 bg-secondary/30 rounded-lg">
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-1">Profit target (%)</label>
+                  <input type="number" value={profitTarget} onChange={e => setProfitTarget(e.target.value)} placeholder="e.g., 20" className="w-full h-8 px-2 rounded-md bg-secondary border border-border text-sm" />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-1">Loss limit (%)</label>
+                  <input type="number" value={lossLimit} onChange={e => setLossLimit(e.target.value)} placeholder="e.g., 10" className="w-full h-8 px-2 rounded-md bg-secondary border border-border text-sm" />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-1">Time limit (min)</label>
+                  <input type="number" value={timeLimitMinutes} onChange={e => setTimeLimitMinutes(e.target.value)} placeholder="e.g., 120" className="w-full h-8 px-2 rounded-md bg-secondary border border-border text-sm" />
+                </div>
               </div>
             )}
           </div>
@@ -666,9 +622,8 @@ const BotsPage = () => {
                     const v = e.target.value;
                     if (v === "" || /^\d*\.?\d*$/.test(v)) setStakeAmount(v);
                   }}
-                  // FIX: Removed scrollIntoView to prevent unwanted autoscroll
                   placeholder={bot.min_stake.toFixed(2)}
-                  className="w-full h-14 pl-7 pr-16 rounded-lg bg-secondary border border-border text-xl font-semibold text-foreground focus:outline-none focus:border-primary"
+                  className="w-full h-14 pl-7 pr-16 rounded-lg bg-secondary border border-border text-xl font-semibold text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all"
                   autoComplete="off"
                 />
                 <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">USDT</span>
@@ -752,25 +707,19 @@ const BotsPage = () => {
                 </div>
                 <div className="flex gap-2"><span className="text-lg font-bold">${currentPrice.toLocaleString()}</span>{selectedPairPrice && <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${selectedPairPrice.price_change_percentage_24h >= 0 ? "bg-profit/10 text-profit" : "bg-loss/10 text-loss"}`}>{selectedPairPrice.price_change_percentage_24h >= 0 ? "+" : ""}{selectedPairPrice.price_change_percentage_24h.toFixed(2)}%</span>}</div>
               </div>
-              {/* Chart area with explicit dimensions for wide screens */}
-              <div className="flex-1 bg-background relative" style={{ minHeight: "450px" }}>
+              {/* Chart area with explicit dimensions */}
+              <div className="flex-1 bg-background relative min-h-[450px]">
                 {chartLoading && (
                   <div className="absolute inset-0 flex items-center justify-center bg-background/80 z-10">
                     <RefreshCw className="h-6 w-6 animate-spin text-primary" />
                   </div>
                 )}
-                {chartError && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/90 z-10 gap-2">
-                    <p className="text-sm text-muted-foreground">Chart failed to load</p>
-                    <Button size="sm" variant="outline" onClick={() => setSelectedChartPair(prev => prev === "bitcoin" ? "ethereum" : "bitcoin")}>Retry</Button>
-                  </div>
-                )}
-                <div ref={chartRef} className="w-full h-full" style={{ minHeight: "450px" }} />
+                <div ref={chartRef} className="w-full h-full min-h-[450px]" />
               </div>
               <div className="border-t bg-card"><div className="flex gap-6 px-4 overflow-x-auto">{(["running","history","pnl"] as const).map(t => (<button key={t} className={`py-3 text-sm font-medium border-b-2 ${bottomTab === t ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`} onClick={() => setBottomTab(t)}>{t === "running" ? "Running" : t === "history" ? "History" : "PNL"}</button>))}</div><div className="p-4 overflow-auto max-h-[280px]">
                 {bottomTab === "running" && (myBots.filter(b => b.status === "running").length === 0 ? <div className="text-center py-8 text-sm">No bots running.</div> : <div className="space-y-2">{myBots.filter(b => b.status === "running").map(bot => (<div key={bot.id} className="flex justify-between items-center p-3 bg-secondary/50 rounded-lg cursor-pointer" onClick={() => setViewingRunningBot(bot)}><div><p className="text-sm font-medium">{bot.name}</p><p className="text-[11px] text-muted-foreground">{getSymbol(bot.crypto_id)}/USDT • Staked: ${(bot.config?.staked_amount || 0).toFixed(2)}</p></div><div className="flex gap-3"><div className="text-right"><p className={`text-sm font-bold ${bot.total_profit >= 0 ? "text-profit" : "text-loss"}`}>{bot.total_profit >= 0 ? "+" : ""}${bot.total_profit.toFixed(2)}</p><p className="text-[10px]">{bot.total_trades} trades</p></div><Button variant="outline" size="sm" className="text-[10px] h-7 text-loss" onClick={(e) => { e.stopPropagation(); if (confirm("Stop bot?")) unstakeBot.mutate(bot); }}>Unstake</Button></div></div>))}</div>)}
                 {bottomTab === "history" && (userTrades.length === 0 ? <p className="text-center text-sm">No trade history.</p> : <div className="overflow-x-auto"><table className="w-full text-xs"><thead><tr className="text-muted-foreground"><th className="text-left py-2">Pair</th><th>Side</th><th className="text-right">Price</th><th className="text-right">Amount</th><th className="text-right">PNL</th><th className="text-right">Time</th></tr></thead><tbody>{userTrades.slice(0,20).map(t => (<tr key={t.id}><td>{getSymbol(t.crypto_id)}/USDT</td><td className={t.side==="buy"?"text-profit":"text-loss"}>{t.side}</td><td className="text-right">${Number(t.price).toLocaleString()}</td><td className="text-right">{Number(t.amount).toFixed(4)}</td><td className={`text-right ${(t.pnl||0)>=0?"text-profit":"text-loss"}`}>${(t.pnl||0).toFixed(2)}</td><td className="text-right text-muted-foreground">{new Date(t.created_at).toLocaleTimeString()}</td></tr>))}</tbody></table></div>)}
-                {bottomTab === "pnl" && (pnlChartData.length === 0 ? <div className="text-center py-8"><BarChart3 className="h-8 w-8 mx-auto opacity-30" /><p>No PNL data yet.</p></div> : <div className="h-64"><ResponsiveContainer><LineChart data={pnlChartData}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="date" /><YAxis /><Tooltip /><Line type="monotone" dataKey="profit" stroke="#22c55e" strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></div>)}
+                {bottomTab === "pnl" && (pnlChartData.length === 0 ? <div className="text-center py-8"><BarChart3 className="h-8 w-8 mx-auto opacity-30" /><p>No PNL data yet.</p></div> : <div className="h-64"><ResponsiveContainer><LineChart data={pnlChartData}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="date" /><YAxis /><RechartsTooltip /><Line type="monotone" dataKey="profit" stroke="#22c55e" strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></div>)}
               </div></div>
             </div>
             {/* Right sidebar */}
@@ -811,7 +760,7 @@ const BotsPage = () => {
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                   <XAxis dataKey="t" hide />
                   <YAxis domain={['auto', 'auto']} hide />
-                  <Tooltip formatter={(v: number) => [`$${v.toFixed(2)}`, 'Price']} />
+                  <RechartsTooltip formatter={(v: number) => [`$${v.toFixed(2)}`, 'Price']} />
                   <Line type="monotone" dataKey="price" stroke="hsl(var(--primary))" strokeWidth={2} dot={false} />
                 </LineChart>
               </ResponsiveContainer>
