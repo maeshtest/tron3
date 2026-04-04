@@ -853,14 +853,14 @@ const BotsPage = () => {
               </div>
             </div>
 
-            {/* Detail view overlays when a bot is selected (replaces bottom area) */}
+            {/* Detail view overlays when a bot is selected (full-screen on mobile) */}
             {(viewingRunningBot || selectedBot) && (
-              <div className="absolute inset-0 z-20 bg-background flex flex-col overflow-hidden">
-                <div className="p-2 border-b flex items-center gap-2">
+              <div className="fixed inset-0 z-50 bg-background flex flex-col overflow-hidden">
+                <div className="p-3 border-b flex items-center gap-2 shrink-0 safe-top">
                   <button onClick={() => { setViewingRunningBot(null); setSelectedBot(null); }} className="p-2 rounded-lg hover:bg-secondary"><ArrowLeft className="h-5 w-5" /></button>
-                  <span className="font-semibold">{viewingRunningBot?.name || selectedBot?.name}</span>
+                  <span className="font-semibold text-sm truncate">{viewingRunningBot?.name || selectedBot?.name}</span>
                 </div>
-                <div className="flex-1 overflow-y-auto">
+                <div className="flex-1 overflow-y-auto overscroll-contain">
                   {viewingRunningBot ? (
                     <BotAnalyticsView bot={viewingRunningBot} onBack={() => setViewingRunningBot(null)} onUnstake={(bot) => { unstakeBot.mutate(bot); setViewingRunningBot(null); }} unstaking={unstakeBot.isPending} />
                   ) : (
