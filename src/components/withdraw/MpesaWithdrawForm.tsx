@@ -16,7 +16,7 @@ const MAX_KES = 150000;
 
 export default function MpesaWithdrawForm({ onBack }: Props) {
   const { user } = useAuth();
-  const { getBalance, refetchWallets } = useWallets();
+  const { getBalance, fetchWallets } = useWallets();
   const [phone, setPhone] = useState("");
   const [amountKES, setAmountKES] = useState("");
   const [step, setStep] = useState<"form" | "confirming" | "pending" | "success" | "failed">("form");
