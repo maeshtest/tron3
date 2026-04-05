@@ -215,7 +215,7 @@ const BotsPage = () => {
       const symbol = getSymbol(lastTrade.crypto_id);
       const side = lastTrade.side === "buy" ? "Long 🔼" : "Short 🔽";
       const pnl = lastTrade.pnl ? (lastTrade.pnl > 0 ? `+$${lastTrade.pnl.toFixed(2)}` : `-$${Math.abs(lastTrade.pnl).toFixed(2)}`) : "";
-      setChatMessages(prev => [{ id: lastTrade.id, text: `🤖 ${symbol}/USDT ${side} at $${Number(lastTrade.price).toFixed(2)} | PnL: ${pnl}`, timestamp: new Date(lastTrade.created_at), type: "bot" }, ...prev].slice(0, 150));
+      setChatMessages(prev => [{ id: lastTrade.id, text: `🤖 ${symbol}/USDT ${side} at $${Number(lastTrade.price).toFixed(2)} | PnL: ${pnl}`, timestamp: new Date(lastTrade.created_at), type: "bot" as const }, ...prev].slice(0, 150));
     }
   }, [publicTrades, getSymbol, botChatEnabled, chatMessages]);
 
