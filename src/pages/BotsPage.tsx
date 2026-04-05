@@ -12,13 +12,14 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useProfile } from "@/hooks/useProfile";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { toast } from "sonner";
 import { Link, useNavigate } from "react-router-dom";
 import { useAppStore } from "@/stores/useAppStore";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from "recharts";
 import { useSiteSettings } from "@/hooks/useSiteSettings";
 import { QRCodeSVG } from "qrcode.react";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 // List of tradeable pairs
 const TRADEABLE = [
@@ -44,12 +45,7 @@ const STRATEGY_LABELS: Record<string, string> = {
 const STRATEGY_FILTERS = ["All", "⚡ AI", "Spot Grid", "Futures Grid", "DCA", "Arbitrage", "Trend", "TWAP", "Scalping", "Momentum", "Breakout", "Range"];
 const TIER_FILTERS = ["All Tiers", "Free", "Pro", "Elite", "VIP"];
 
-const TIER_ORDER: Record<string, number> = {
-  free: 1,
-  pro: 2,
-  elite: 3,
-  vip: 4,
-};
+const TIER_ORDER: Record<string, number> = { free: 1, pro: 2, elite: 3, vip: 4 };
 
 function formatRuntime(createdAt: string) {
   const ms = Date.now() - new Date(createdAt).getTime();
@@ -74,36 +70,27 @@ function calcWinRate(trades: number, profit: number) {
 }
 
 async function getUserBotIds(userId: string) {
-  const { data } = await supabase
-    .from("trading_bots")
-    .select("id")
-    .eq("user_id", userId);
+  const { data } = await supabase.from("trading_bots").select("id").eq("user_id", userId);
   return (data || []).map(b => b.id);
 }
 
-interface ChatMessage {
-  id: string;
-  text: string;
-  timestamp: Date;
-  type: "bot" | "user" | "system";
-}
+interface ChatMessage { id: string; text: string; timestamp: Date; type: "bot" | "user" | "system"; }
+interface AutoStopConfig { enabled: boolean; profitTarget?: number; lossLimit?: number; timeLimitMinutes?: number; }
 
-interface AutoStopConfig {
-  enabled: boolean;
-  profitTarget?: number;
-  lossLimit?: number;
-  timeLimitMinutes?: number;
-}
+/** Shared input class for consistent styling */
+const inputCls = "w-full rounded-lg bg-secondary border border-border text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all";
 
 const BotsPage = () => {
   const { getSymbol, prices } = useCryptoPrices();
   const { user } = useAuth();
-  const { profile, refetch: refetchProfile } = useProfile();
+  const { profile } = useProfile();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { demoMode, demoBalance, setDemoBalance } = useAppStore();
   const { settings } = useSiteSettings();
+  const isMobile = useIsMobile();
   const accountTier = (profile as any)?.account_tier || "free";
+
   const [mainTab, setMainTab] = useState<"popular" | "ai">("popular");
   const [searchQuery, setSearchQuery] = useState("");
   const [tierFilter, setTierFilter] = useState("All Tiers");
@@ -117,7 +104,7 @@ const BotsPage = () => {
   const [selectedChartPair, setSelectedChartPair] = useState("bitcoin");
   const chartRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const [chartLoading, setChartLoading] = useState(true);
+  const [chartLoaded, setChartLoaded] = useState(false);
 
   // Auto-stop state
   const [autoStopEnabled, setAutoStopEnabled] = useState(false);
@@ -133,26 +120,13 @@ const BotsPage = () => {
   const [botChatEnabled, setBotChatEnabled] = useState(true);
   const [stopSummary, setStopSummary] = useState<any>(null);
 
-  // Data queries
+  // ─── Data queries ───
   const { data: usdtWallet, refetch: refetchWallet } = useQuery({
     queryKey: ["usdt_wallet", user?.id],
     queryFn: async () => {
       if (!user) return null;
-      const { data } = await supabase
-        .from("wallets")
-        .select("*")
-        .eq("user_id", user.id)
-        .eq("crypto_id", "tether")
-        .maybeSingle();
-      if (!data) {
-        const { data: d2 } = await supabase
-          .from("wallets")
-          .select("*")
-          .eq("user_id", user.id)
-          .eq("crypto_id", "usdt")
-          .maybeSingle();
-        return d2;
-      }
+      const { data } = await supabase.from("wallets").select("*").eq("user_id", user.id).eq("crypto_id", "tether").maybeSingle();
+      if (!data) { const { data: d2 } = await supabase.from("wallets").select("*").eq("user_id", user.id).eq("crypto_id", "usdt").maybeSingle(); return d2; }
       return data;
     },
     enabled: !!user,
@@ -162,11 +136,7 @@ const BotsPage = () => {
   const { data: platformBots = [] } = useQuery({
     queryKey: ["platform_bots_all"],
     queryFn: async () => {
-      const { data } = await supabase
-        .from("trading_bots")
-        .select("*")
-        .is("user_id", null)
-        .order("total_profit", { ascending: false });
+      const { data } = await supabase.from("trading_bots").select("*").is("user_id", null).order("total_profit", { ascending: false });
       return (data || []).map((b: any) => ({ ...b, total_profit: Number(b.total_profit), daily_earn: Number(b.daily_earn || 0), min_stake: Number(b.min_stake || 30) }));
     },
     refetchInterval: 10000,
@@ -176,11 +146,7 @@ const BotsPage = () => {
     queryKey: ["my_bots", user?.id],
     queryFn: async () => {
       if (!user) return [];
-      const { data } = await supabase
-        .from("trading_bots")
-        .select("*")
-        .eq("user_id", user.id)
-        .order("created_at", { ascending: false });
+      const { data } = await supabase.from("trading_bots").select("*").eq("user_id", user.id).order("created_at", { ascending: false });
       return (data || []).map((b: any) => ({ ...b, total_profit: Number(b.total_profit) }));
     },
     enabled: !!user,
@@ -193,12 +159,7 @@ const BotsPage = () => {
       if (!user) return [];
       const botIds = await getUserBotIds(user.id);
       if (botIds.length === 0) return [];
-      const { data } = await supabase
-        .from("bot_trades")
-        .select("*")
-        .in("bot_id", botIds)
-        .order("created_at", { ascending: false })
-        .limit(50);
+      const { data } = await supabase.from("bot_trades").select("*").in("bot_id", botIds).order("created_at", { ascending: false }).limit(50);
       return data || [];
     },
     enabled: !!user,
@@ -216,7 +177,7 @@ const BotsPage = () => {
 
   const usdtBalance = Number(usdtWallet?.balance || 0);
 
-  // Auto-stop monitoring effect
+  // ─── Auto-stop monitoring ───
   useEffect(() => {
     if (!myBots.length) return;
     const interval = setInterval(() => {
@@ -224,67 +185,41 @@ const BotsPage = () => {
         if (bot.status !== "running") return;
         const autoStop = bot.config?.autoStop as AutoStopConfig;
         if (!autoStop?.enabled) return;
-
         const profit = bot.total_profit || 0;
         const staked = bot.config?.staked_amount || 0;
         const profitPct = staked > 0 ? (profit / staked) * 100 : 0;
-        const createdAt = new Date(bot.created_at);
-        const now = new Date();
-        const minutesRunning = (now.getTime() - createdAt.getTime()) / 60000;
-
-        let shouldStop = false;
-        let reason = "";
-
-        if (autoStop.profitTarget && profitPct >= autoStop.profitTarget) {
-          shouldStop = true;
-          reason = `Profit target of ${autoStop.profitTarget}% reached (${profitPct.toFixed(2)}%)`;
-        } else if (autoStop.lossLimit && profitPct <= -autoStop.lossLimit) {
-          shouldStop = true;
-          reason = `Loss limit of ${autoStop.lossLimit}% hit (${profitPct.toFixed(2)}%)`;
-        } else if (autoStop.timeLimitMinutes && minutesRunning >= autoStop.timeLimitMinutes) {
-          shouldStop = true;
-          reason = `Time limit of ${autoStop.timeLimitMinutes} minutes elapsed`;
-        }
-
-        if (shouldStop) {
-          toast.info(`Auto-stopping ${bot.name}: ${reason}`);
-          unstakeBot.mutate(bot);
-        }
+        const minutesRunning = (Date.now() - new Date(bot.created_at).getTime()) / 60000;
+        let shouldStop = false, reason = "";
+        if (autoStop.profitTarget && profitPct >= autoStop.profitTarget) { shouldStop = true; reason = `Profit target ${autoStop.profitTarget}% reached`; }
+        else if (autoStop.lossLimit && profitPct <= -autoStop.lossLimit) { shouldStop = true; reason = `Loss limit ${autoStop.lossLimit}% hit`; }
+        else if (autoStop.timeLimitMinutes && minutesRunning >= autoStop.timeLimitMinutes) { shouldStop = true; reason = `Time limit ${autoStop.timeLimitMinutes}min elapsed`; }
+        if (shouldStop) { toast.info(`Auto-stopping ${bot.name}: ${reason}`); unstakeBot.mutate(bot); }
       });
     }, 5000);
     return () => clearInterval(interval);
   }, [myBots]);
 
-  // Auto-navigation
+  // Auto-navigate to new bot
   useEffect(() => {
     if (!myBots.length) return;
     const now = Date.now();
     const newBot = myBots.find(b => b.status === "running" && (now - new Date(b.created_at).getTime() < 2000) && !viewingRunningBot);
-    if (newBot) {
-      setViewingRunningBot(newBot);
-      toast.success(`${newBot.name} started! Opening analytics...`);
-    }
+    if (newBot) { setViewingRunningBot(newBot); toast.success(`${newBot.name} started!`); }
   }, [myBots, viewingRunningBot]);
 
   // Chat: bot trade messages
   useEffect(() => {
-    if (!botChatEnabled) return;
-    if (publicTrades.length === 0) return;
+    if (!botChatEnabled || publicTrades.length === 0) return;
     const lastTrade = publicTrades[0];
     if (!chatMessages.some(m => m.id === lastTrade.id)) {
       const symbol = getSymbol(lastTrade.crypto_id);
       const side = lastTrade.side === "buy" ? "Long 🔼" : "Short 🔽";
       const pnl = lastTrade.pnl ? (lastTrade.pnl > 0 ? `+$${lastTrade.pnl.toFixed(2)}` : `-$${Math.abs(lastTrade.pnl).toFixed(2)}`) : "";
-      const messageText = `🤖 **Bot Trade** | ${symbol}/USDT ${side} at $${Number(lastTrade.price).toFixed(2)} | Amount: ${Number(lastTrade.amount).toFixed(4)} | PnL: ${pnl}`;
-      setChatMessages(prev => [{ id: lastTrade.id, text: messageText, timestamp: new Date(lastTrade.created_at), type: "bot" as const }, ...prev].slice(0, 150));
+      setChatMessages(prev => [{ id: lastTrade.id, text: `🤖 ${symbol}/USDT ${side} at $${Number(lastTrade.price).toFixed(2)} | PnL: ${pnl}`, timestamp: new Date(lastTrade.created_at), type: "bot" }, ...prev].slice(0, 150));
     }
   }, [publicTrades, getSymbol, botChatEnabled, chatMessages]);
 
-  useEffect(() => {
-    if (chatOpen && chatMessages.length === 0) {
-      setChatMessages([{ id: "welcome", text: "👋 Welcome to Bot Chat! Try /help", timestamp: new Date(), type: "system" }]);
-    }
-  }, [chatOpen, chatMessages.length]);
+  useEffect(() => { if (chatOpen && chatMessages.length === 0) setChatMessages([{ id: "welcome", text: "👋 Welcome to Bot Chat! Try /help", timestamp: new Date(), type: "system" }]); }, [chatOpen, chatMessages.length]);
 
   // Simulated trade generator
   useEffect(() => {
@@ -307,21 +242,18 @@ const BotsPage = () => {
           if (wallet) await supabase.from("wallets").update({ balance: Number(wallet.balance) + pnl }).eq("id", wallet.id);
         } else if (demoMode) setDemoBalance(demoBalance + pnl);
         emitTradeAlert({ id: `${bot.id}-${Date.now()}`, side: side as "buy" | "sell", symbol: symbol || "BTC", price: tradePrice, amount, timestamp: Date.now() });
-        if (botChatEnabled && Math.random() < 0.3) {
-          setChatMessages(prev => [{ id: `bot-${Date.now()}`, text: `🤖 ${bot.name} executed ${side === "buy" ? "LONG" : "SHORT"} on ${symbol}/USDT. Profit: $${pnl.toFixed(2)} 🚀`, timestamp: new Date(), type: "bot" as const }, ...prev].slice(0, 150));
-        }
       });
     }, 2000);
     return () => clearInterval(interval);
-  }, [myBots, prices, demoMode, demoBalance, user, getSymbol, setDemoBalance, botChatEnabled]);
+  }, [myBots, prices, demoMode, demoBalance, user, getSymbol, setDemoBalance]);
 
-  // Stake mutation
+  // ─── Mutations ───
   const stakeBot = useMutation({
     mutationFn: async ({ bot, amount, autoStopConfig }: { bot: any; amount: number; autoStopConfig?: AutoStopConfig }) => {
       if (!user) throw new Error("Not authenticated");
       if (demoMode) {
         if (amount < bot.min_stake) throw new Error(`Minimum stake is $${bot.min_stake} USDT`);
-        if (amount > demoBalance) throw new Error(`Insufficient demo balance. You have $${demoBalance.toFixed(2)} USDT`);
+        if (amount > demoBalance) throw new Error(`Insufficient demo balance`);
       } else {
         if (amount < bot.min_stake) throw new Error(`Minimum stake is $${bot.min_stake} USDT`);
         if (amount > usdtBalance) throw new Error(`Insufficient balance. You have $${usdtBalance.toFixed(2)} USDT`);
@@ -329,50 +261,28 @@ const BotsPage = () => {
       if (demoMode) setDemoBalance(demoBalance - amount);
       else {
         const walletId = usdtWallet?.id;
-        if (!walletId) throw new Error("No USDT wallet found. Please deposit first.");
-        const { error: walletErr } = await supabase.from("wallets").update({ balance: usdtBalance - amount }).eq("id", walletId);
-        if (walletErr) throw walletErr;
+        if (!walletId) throw new Error("No USDT wallet found. Deposit first.");
+        await supabase.from("wallets").update({ balance: usdtBalance - amount }).eq("id", walletId);
       }
       const config = { ...((bot.config as any) || {}), staked_amount: amount, autoStop: autoStopConfig };
       const { data: newBot, error } = await supabase
         .from("trading_bots")
-        .insert({
-          name: bot.name,
-          crypto_id: bot.crypto_id,
-          strategy: bot.strategy,
-          config,
-          user_id: user.id,
-          status: "running",
-          tier: bot.tier || "free",
-          description: bot.description || "",
-          is_ai: bot.is_ai || false,
-          min_stake: bot.min_stake || 30,
-          daily_earn: bot.daily_earn || 0
-        } as any)
-        .select()
-        .single();
+        .insert({ name: bot.name, crypto_id: bot.crypto_id, strategy: bot.strategy, config, user_id: user.id, status: "running", tier: bot.tier || "free", description: bot.description || "", is_ai: bot.is_ai || false, min_stake: bot.min_stake || 30, daily_earn: bot.daily_earn || 0 } as any)
+        .select().single();
       if (error) throw error;
       await supabase.from("ledger_entries").insert({ user_id: user.id, crypto_id: "usdt", amount: -amount, entry_type: "bot_stake", description: `Staked $${amount} USDT in ${bot.name}` } as any);
-      setChatMessages(prev => [{ id: Date.now().toString(), text: `✅ Staked $${amount} USDT in ${bot.name}. Bot is now running.`, timestamp: new Date(), type: "system" }, ...prev]);
       return newBot;
     },
     onSuccess: (newBot) => {
       queryClient.invalidateQueries({ queryKey: ["my_bots"] });
       queryClient.invalidateQueries({ queryKey: ["usdt_wallet"] });
       toast.success("Bot started!");
-      setSelectedBot(null);
-      setStakeAmount("");
-      setAutoStopEnabled(false);
-      setProfitTarget("");
-      setLossLimit("");
-      setTimeLimitMinutes("");
+      setSelectedBot(null); setStakeAmount(""); setAutoStopEnabled(false); setProfitTarget(""); setLossLimit(""); setTimeLimitMinutes("");
       if (newBot) setViewingRunningBot(newBot);
     },
     onError: (err: any) => {
-      if (err.message.includes("Insufficient balance")) {
-        toast.error(err.message);
-        setTimeout(() => navigate("/deposit"), 1500);
-      } else toast.error(err.message);
+      if (err.message.includes("Insufficient")) { toast.error(err.message); setTimeout(() => navigate("/deposit"), 1500); }
+      else toast.error(err.message);
     },
   });
 
@@ -387,22 +297,10 @@ const BotsPage = () => {
       else await supabase.from("wallets").insert({ user_id: user.id, crypto_id: "usdt", balance: returnAmount });
       await supabase.from("ledger_entries").insert({ user_id: user.id, crypto_id: "usdt", amount: returnAmount, entry_type: "bot_unstake", description: `Unstaked $${stakedAmount.toFixed(2)} + $${profit.toFixed(2)} profit from ${bot.name}` } as any);
       await supabase.from("trading_bots").delete().eq("id", bot.id);
-      setChatMessages(prev => [{ id: Date.now().toString(), text: `🛑 Unstaked ${bot.name}. Returned $${returnAmount.toFixed(2)} USDT.`, timestamp: new Date(), type: "system" as const }, ...prev]);
       const ms = Date.now() - new Date(bot.created_at).getTime();
-      const days = Math.floor(ms / 86400000);
-      const hours = Math.floor((ms % 86400000) / 3600000);
-      const mins = Math.floor((ms % 3600000) / 60000);
+      const days = Math.floor(ms / 86400000); const hours = Math.floor((ms % 86400000) / 3600000); const mins = Math.floor((ms % 3600000) / 60000);
       const duration = days > 0 ? `${days}d ${hours}h ${mins}m` : hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
-      setStopSummary({
-        botName: bot.name,
-        pair: `${getSymbol(bot.crypto_id)}/USDT`,
-        strategy: STRATEGY_LABELS[bot.strategy] || bot.strategy,
-        stakedAmount,
-        profit,
-        duration,
-        totalTrades: bot.total_trades || 0,
-        winRate: calcWinRate(bot.total_trades || 0, profit),
-      });
+      setStopSummary({ botName: bot.name, pair: `${getSymbol(bot.crypto_id)}/USDT`, strategy: STRATEGY_LABELS[bot.strategy] || bot.strategy, stakedAmount, profit, duration, totalTrades: bot.total_trades || 0, winRate: calcWinRate(bot.total_trades || 0, profit) });
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["my_bots"] }); queryClient.invalidateQueries({ queryKey: ["usdt_wallet"] }); toast.success("Bot stopped & funds returned!"); },
     onError: (err: any) => toast.error(err.message),
@@ -410,11 +308,11 @@ const BotsPage = () => {
 
   const runBotsNow = useMutation({
     mutationFn: async () => { const { data, error } = await supabase.functions.invoke("run-bots"); if (error) throw error; return data; },
-    onSuccess: (data: any) => { queryClient.invalidateQueries({ queryKey: ["my_bots"] }); queryClient.invalidateQueries({ queryKey: ["public_bot_trades"] }); toast.success(`Executed ${data?.executed || 0} trades!`); },
+    onSuccess: (data: any) => { queryClient.invalidateQueries({ queryKey: ["my_bots"] }); toast.success(`Executed ${data?.executed || 0} trades!`); },
     onError: (err: any) => toast.error(err.message),
   });
 
-  // Filtering
+  // ─── Filtering ───
   const filteredBots = useMemo(() => {
     let bots = platformBots;
     if (mainTab === "ai") bots = bots.filter((b: any) => b.is_ai);
@@ -425,16 +323,8 @@ const BotsPage = () => {
       const mapped = stratMap[strategyFilter];
       if (mapped) bots = bots.filter((b: any) => b.strategy === mapped);
     }
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      bots = bots.filter((b: any) => b.name.toLowerCase().includes(q) || b.crypto_id.toLowerCase().includes(q));
-    }
-    return bots.sort((a: any, b: any) => {
-      const orderA = TIER_ORDER[(a.tier || "free").toLowerCase()] ?? 99;
-      const orderB = TIER_ORDER[(b.tier || "free").toLowerCase()] ?? 99;
-      if (orderA !== orderB) return orderA - orderB;
-      return b.total_profit - a.total_profit;
-    });
+    if (searchQuery) { const q = searchQuery.toLowerCase(); bots = bots.filter((b: any) => b.name.toLowerCase().includes(q) || b.crypto_id.toLowerCase().includes(q)); }
+    return bots.sort((a: any, b: any) => { const oa = TIER_ORDER[(a.tier || "free").toLowerCase()] ?? 99; const ob = TIER_ORDER[(b.tier || "free").toLowerCase()] ?? 99; if (oa !== ob) return oa - ob; return b.total_profit - a.total_profit; });
   }, [platformBots, mainTab, tierFilter, strategyFilter, searchQuery]);
 
   const isPremiumTier = (bot: any) => { const tier = (bot.tier || "free").toLowerCase(); return tier === "pro" || tier === "elite" || tier === "vip"; };
@@ -450,38 +340,54 @@ const BotsPage = () => {
     return sortedDates.map(date => { cumulative += dailyProfit[date]; return { date, profit: cumulative }; });
   }, [userTrades]);
 
-  // TradingView chart - SIMPLE & RELIABLE (copied from FuturesPage)
+  // ─── TradingView chart (simple, reliable — same as FuturesPage) ───
   useEffect(() => {
-    if (!chartRef.current || !getSymbol(selectedChartPair)) return;
-    // Clear previous content
-    while (chartRef.current.firstChild) {
-      chartRef.current.removeChild(chartRef.current.firstChild);
-    }
-    setChartLoading(true);
+    // Only load on desktop
+    if (isMobile) return;
+    if (!chartRef.current) return;
+    const symbol = getSymbol(selectedChartPair);
+    if (!symbol) return;
+
+    // Clear previous
+    chartRef.current.innerHTML = "";
+    setChartLoaded(false);
+
+    const container = document.createElement("div");
+    container.className = "tradingview-widget-container";
+    container.style.height = "100%";
+    container.style.width = "100%";
+
+    const widgetDiv = document.createElement("div");
+    widgetDiv.className = "tradingview-widget-container__widget";
+    widgetDiv.style.height = "calc(100% - 32px)";
+    widgetDiv.style.width = "100%";
+    container.appendChild(widgetDiv);
+
     const script = document.createElement("script");
     script.src = "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
     script.type = "text/javascript";
     script.async = true;
     script.innerHTML = JSON.stringify({
       autosize: true,
-      symbol: `BINANCE:${getSymbol(selectedChartPair)}USDT`,
+      symbol: `BINANCE:${symbol}USDT`,
       interval: "15",
       timezone: "Etc/UTC",
-      theme: document.documentElement.classList.contains("dark") ? "dark" : "light",
+      theme: "dark",
       style: "1",
       locale: "en",
       allow_symbol_change: false,
+      calendar: false,
       support_host: "https://www.tradingview.com",
     });
-    script.onload = () => setChartLoading(false);
-    script.onerror = () => {
-      setChartLoading(false);
-      toast.error("Failed to load chart");
-    };
-    chartRef.current.appendChild(script);
-  }, [selectedChartPair, getSymbol]);
+    container.appendChild(script);
+    chartRef.current.appendChild(container);
 
-  // Dropdown close handler
+    // Mark loaded after a short delay (widget renders async)
+    const timer = setTimeout(() => setChartLoaded(true), 2000);
+    return () => clearTimeout(timer);
+  }, [selectedChartPair, getSymbol, isMobile]);
+
+  // Dropdown close
   useEffect(() => {
     const handler = (e: MouseEvent) => { if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) setPairDropdownOpen(false); };
     document.addEventListener("mousedown", handler);
@@ -494,7 +400,7 @@ const BotsPage = () => {
   const currentPrice = selectedPairPrice?.current_price ?? 0;
   const chartPairName = getSymbol(selectedChartPair) ? `${getSymbol(selectedChartPair)}/USDT` : "BTC/USDT";
 
-  // Helper components
+  // ─── Components ───
   const Sparkline = () => {
     const points = Array.from({ length: 20 }, (_, i) => { const y = 20 + Math.sin(i * 0.5) * 8 + Math.random() * 6; return `${i * 5},${40 - y}`; }).join(" ");
     return <svg viewBox="0 0 95 40" className="w-16 h-8"><polyline fill="none" stroke="hsl(var(--profit))" strokeWidth="1.5" points={points} /></svg>;
@@ -509,8 +415,8 @@ const BotsPage = () => {
     const runtime = formatRuntime(bot.created_at);
     const locked = !canAccessTier(tier) && !demoMode;
     return (
-      <div className={`bg-card border border-border rounded-xl p-3 relative overflow-hidden cursor-pointer hover:border-primary/30 transition-all ${locked ? "opacity-70" : ""}`} onClick={() => handleSelectBot(bot)}>
-        {locked && <div className="absolute inset-0 bg-background/60 backdrop-blur-[2px] z-10 flex items-center justify-center"><Lock className="h-5 w-5 text-muted-foreground" /><span className="text-[10px] font-bold">Upgrade to {tier}</span></div>}
+      <div className={`bg-card border border-border rounded-xl p-3 relative overflow-hidden cursor-pointer hover:border-primary/40 hover:shadow-md transition-all ${locked ? "opacity-70" : ""}`} onClick={() => handleSelectBot(bot)}>
+        {locked && <div className="absolute inset-0 bg-background/60 backdrop-blur-[2px] z-10 flex items-center justify-center"><Lock className="h-5 w-5 text-muted-foreground" /><span className="text-[10px] font-bold ml-1">Upgrade to {tier}</span></div>}
         <div className="flex items-center gap-1.5 mb-3 flex-wrap">
           <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${TIER_COLORS[tier]}`}>{stratLabel}</span>
           <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${TIER_COLORS[tier]}`}>{tier}</span>
@@ -526,7 +432,10 @@ const BotsPage = () => {
           <div><p className="text-[10px] text-muted-foreground">Daily Earn</p><p className="text-xs font-bold text-profit">{bot.daily_earn.toFixed(2)}%</p></div>
           <div><p className="text-[10px] text-muted-foreground">Min. Stake</p><p className="text-xs font-medium">${bot.min_stake.toFixed(2)}</p></div>
         </div>
-        <div className="flex justify-between items-center pt-2 border-t"><div className="flex gap-1 text-[10px] text-muted-foreground"><Users className="h-3 w-3" />{bot.bot_users || 0} users</div><Button size="sm" className="text-[11px] h-7 bg-profit hover:bg-profit/80 text-white gap-1" onClick={(e) => { e.stopPropagation(); handleSelectBot(bot); }}><Copy className="h-3 w-3" /> Copy</Button></div>
+        <div className="flex justify-between items-center pt-2 border-t">
+          <div className="flex gap-1 text-[10px] text-muted-foreground"><Users className="h-3 w-3" />{bot.bot_users || 0} users</div>
+          <Button size="sm" className="text-[11px] h-7 bg-profit hover:bg-profit/80 text-white gap-1 shadow-sm" onClick={(e) => { e.stopPropagation(); handleSelectBot(bot); }}><Copy className="h-3 w-3" /> Copy</Button>
+        </div>
       </div>
     );
   };
@@ -563,6 +472,8 @@ const BotsPage = () => {
         </div>
         <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-4">
           <div className="p-3 bg-profit/10 border border-profit/20 rounded-lg"><p className="text-[11px] text-profit flex gap-1.5"><Info className="h-3.5 w-3.5 shrink-0" />{premium && !demoMode ? "Premium bot requires a deposit to activate." : "Shared parameter bot."}</p></div>
+
+          {/* Basic Info */}
           <div><h3 className="text-sm font-bold mb-2">Basic Info</h3><div className="bg-secondary/50 rounded-lg border divide-y">{[
             { label: "PNL", value: `+${bot.total_profit.toLocaleString()}`, color: "text-profit" },
             { label: "ROI", value: `+${roi.toFixed(2)}%/hr`, color: "text-profit" },
@@ -573,57 +484,65 @@ const BotsPage = () => {
             { label: "Tier", value: (bot.tier || "free").charAt(0).toUpperCase() + (bot.tier || "free").slice(1), color: premium ? "text-primary font-semibold" : "" },
           ].map(row => (<div key={row.label} className="flex justify-between px-3 py-2.5"><span className="text-xs text-muted-foreground">{row.label}</span><span className={`text-xs font-medium ${row.color}`}>{row.value}</span></div>))}</div></div>
 
-          {/* Auto-stop configuration - improved layout */}
+          {/* Auto-stop configuration — responsive 3-column grid */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
-                <input type="checkbox" checked={autoStopEnabled} onChange={(e) => setAutoStopEnabled(e.target.checked)} className="rounded border-border" />
-                <StopCircle className="h-4 w-4 text-destructive" /> Auto-stop bot
+                <input type="checkbox" checked={autoStopEnabled} onChange={(e) => setAutoStopEnabled(e.target.checked)} className="rounded border-border accent-primary" />
+                <StopCircle className="h-4 w-4 text-destructive" /> Auto-stop
               </label>
               <TooltipProvider>
                 <Tooltip>
-                  <TooltipTrigger asChild>
-                    <HelpCircle className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
-                  </TooltipTrigger>
-                  <TooltipContent>Automatically stop bot when profit/loss or time limit is reached</TooltipContent>
+                  <TooltipTrigger asChild><HelpCircle className="h-3.5 w-3.5 text-muted-foreground cursor-help" /></TooltipTrigger>
+                  <TooltipContent className="max-w-[220px] text-xs">Stop bot automatically when profit target, loss limit, or time limit is reached.</TooltipContent>
                 </Tooltip>
               </TooltipProvider>
             </div>
             {autoStopEnabled && (
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 bg-secondary/30 rounded-lg">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 bg-secondary/30 rounded-lg border border-border/50">
                 <div>
-                  <label className="text-xs text-muted-foreground block mb-1">Profit target (%)</label>
-                  <input type="number" value={profitTarget} onChange={e => setProfitTarget(e.target.value)} placeholder="e.g., 20" className="w-full h-8 px-2 rounded-md bg-secondary border border-border text-sm" />
+                  <div className="flex items-center gap-1 mb-1">
+                    <Target className="h-3 w-3 text-profit" />
+                    <label className="text-xs text-muted-foreground">Profit target (%)</label>
+                    <TooltipProvider><Tooltip><TooltipTrigger asChild><HelpCircle className="h-2.5 w-2.5 text-muted-foreground/50" /></TooltipTrigger><TooltipContent className="text-xs">Stop when profit reaches this % of staked amount</TooltipContent></Tooltip></TooltipProvider>
+                  </div>
+                  <input type="number" value={profitTarget} onChange={e => setProfitTarget(e.target.value)} placeholder="e.g., 20" className={`${inputCls} h-9 px-3`} />
                 </div>
                 <div>
-                  <label className="text-xs text-muted-foreground block mb-1">Loss limit (%)</label>
-                  <input type="number" value={lossLimit} onChange={e => setLossLimit(e.target.value)} placeholder="e.g., 10" className="w-full h-8 px-2 rounded-md bg-secondary border border-border text-sm" />
+                  <div className="flex items-center gap-1 mb-1">
+                    <StopCircle className="h-3 w-3 text-loss" />
+                    <label className="text-xs text-muted-foreground">Loss limit (%)</label>
+                    <TooltipProvider><Tooltip><TooltipTrigger asChild><HelpCircle className="h-2.5 w-2.5 text-muted-foreground/50" /></TooltipTrigger><TooltipContent className="text-xs">Stop when loss exceeds this % of staked amount</TooltipContent></Tooltip></TooltipProvider>
+                  </div>
+                  <input type="number" value={lossLimit} onChange={e => setLossLimit(e.target.value)} placeholder="e.g., 10" className={`${inputCls} h-9 px-3`} />
                 </div>
                 <div>
-                  <label className="text-xs text-muted-foreground block mb-1">Time limit (min)</label>
-                  <input type="number" value={timeLimitMinutes} onChange={e => setTimeLimitMinutes(e.target.value)} placeholder="e.g., 120" className="w-full h-8 px-2 rounded-md bg-secondary border border-border text-sm" />
+                  <div className="flex items-center gap-1 mb-1">
+                    <Timer className="h-3 w-3 text-primary" />
+                    <label className="text-xs text-muted-foreground">Time limit (min)</label>
+                    <TooltipProvider><Tooltip><TooltipTrigger asChild><HelpCircle className="h-2.5 w-2.5 text-muted-foreground/50" /></TooltipTrigger><TooltipContent className="text-xs">Stop after this many minutes</TooltipContent></Tooltip></TooltipProvider>
+                  </div>
+                  <input type="number" value={timeLimitMinutes} onChange={e => setTimeLimitMinutes(e.target.value)} placeholder="e.g., 120" className={`${inputCls} h-9 px-3`} />
                 </div>
               </div>
             )}
           </div>
 
+          {/* Stake amount input */}
           {premium && !demoMode && paymentStep === "pay" ? (
-            <div className="p-4 border border-primary/30 rounded-xl"><div className="flex gap-2 mb-3"><Wallet className="h-4 w-4 text-primary" /><h3 className="text-sm font-bold">Send Payment</h3></div><p className="text-xs mb-3">Send <span className="font-bold">${stakeAmount || bot.min_stake} USDT</span> to:</p><div className="flex justify-center mb-3"><div className="bg-white p-2 rounded-lg"><QRCodeSVG value={depositAddress} size={120} /></div></div><div className="bg-secondary p-3 rounded-lg mb-3"><p className="text-[10px] mb-1">Address</p><p className="text-xs font-mono break-all">{depositAddress}</p></div><button onClick={() => { navigator.clipboard.writeText(depositAddress); toast.success("Copied!"); }} className="w-full text-xs py-2 rounded-lg bg-primary/10 text-primary mb-3">Copy</button><p className="text-[10px] text-center">After sending, click "I've Paid".</p></div>
+            <div className="p-4 border border-primary/30 rounded-xl"><div className="flex gap-2 mb-3"><Wallet className="h-4 w-4 text-primary" /><h3 className="text-sm font-bold">Send Payment</h3></div><p className="text-xs mb-3">Send <span className="font-bold">${stakeAmount || bot.min_stake} USDT</span> to:</p><div className="flex justify-center mb-3"><div className="bg-white p-2 rounded-lg"><QRCodeSVG value={depositAddress} size={120} /></div></div><div className="bg-secondary p-3 rounded-lg mb-3"><p className="text-[10px] mb-1">Address</p><p className="text-xs font-mono break-all">{depositAddress}</p></div><button onClick={() => { navigator.clipboard.writeText(depositAddress); toast.success("Copied!"); }} className="w-full text-xs py-2 rounded-lg bg-primary/10 text-primary mb-3">Copy</button></div>
           ) : (
             <div className="p-4 border rounded-lg">
               <div className="flex justify-between mb-2"><span className="text-sm font-semibold">Stake Amount (USDT)</span></div>
               <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-foreground">$</span>
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-foreground font-medium">$</span>
                 <input
                   type="text"
                   inputMode="decimal"
                   value={stakeAmount}
-                  onChange={e => {
-                    const v = e.target.value;
-                    if (v === "" || /^\d*\.?\d*$/.test(v)) setStakeAmount(v);
-                  }}
+                  onChange={e => { const v = e.target.value; if (v === "" || /^\d*\.?\d*$/.test(v)) setStakeAmount(v); }}
                   placeholder={bot.min_stake.toFixed(2)}
-                  className="w-full h-14 pl-7 pr-16 rounded-lg bg-secondary border border-border text-xl font-semibold text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all"
+                  className={`${inputCls} h-14 pl-7 pr-16 text-xl font-semibold`}
                   autoComplete="off"
                 />
                 <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">USDT</span>
@@ -640,10 +559,10 @@ const BotsPage = () => {
         </div>
         <div className="p-4 border-t shrink-0">
           {premium && !demoMode && paymentStep === "pay" ? (<Button className="w-full h-12 bg-primary" onClick={() => { toast.success("Verifying..."); setPaymentStep("monitoring"); setTimeout(() => { stakeBot.mutate({ bot, amount: Number(stakeAmount) || bot.min_stake }); setPaymentStep("info"); }, 3000); }}><CreditCard className="mr-2" /> I've Paid</Button>) :
-          premium && !demoMode && paymentStep === "monitoring" ? (<Button disabled><RefreshCw className="animate-spin mr-2" /> Verifying</Button>) :
+          premium && !demoMode && paymentStep === "monitoring" ? (<Button disabled className="w-full h-12"><RefreshCw className="animate-spin mr-2" /> Verifying</Button>) :
           premium && !demoMode ? (<Button className="w-full h-12 bg-profit" disabled={amount < bot.min_stake} onClick={() => setPaymentStep("pay")}>{amount >= bot.min_stake ? `Pay $${amount.toFixed(2)}` : "Enter amount"}</Button>) :
           (<Button className="w-full h-12 bg-profit hover:bg-profit/90 text-white font-bold text-base" disabled={!canStake || stakeBot.isPending} onClick={handleStartBot}>{stakeBot.isPending ? "Processing..." : canStake ? `Start Bot — $${amount.toFixed(2)}` : amount > 0 ? "Amount too low" : "Enter amount"}</Button>)}
-          <p className="text-[10px] text-center mt-2">By clicking, you agree to terms.</p>
+          <p className="text-[10px] text-center mt-2 text-muted-foreground">By clicking, you agree to terms.</p>
         </div>
       </div>
     );
@@ -654,13 +573,9 @@ const BotsPage = () => {
     if (!canAccessTier(botTier) && !demoMode) { toast.error(`Upgrade to ${botTier} tier to use this bot.`); return; }
     setSelectedBot(bot);
     setSelectedChartPair(bot.crypto_id);
-    setAutoStopEnabled(false);
-    setProfitTarget("");
-    setLossLimit("");
-    setTimeLimitMinutes("");
+    setAutoStopEnabled(false); setProfitTarget(""); setLossLimit(""); setTimeLimitMinutes("");
   };
 
-  // Chat command handler
   const handleSendMessage = () => {
     const msg = chatInput.trim();
     if (!msg) return;
@@ -670,15 +585,50 @@ const BotsPage = () => {
     const addBotMsg = (text: string) => setChatMessages(prev => [{ id: Date.now().toString(), text, timestamp: new Date(), type: "bot" }, ...prev]);
     if (lowerMsg === "/status") {
       const runningBots = myBots.filter((b: any) => b.status === "running");
-      if (runningBots.length === 0) addBotMsg("📊 You have no running bots. Copy a bot from the list to start.");
-      else { const totalProfit = runningBots.reduce((s, b) => s + (b.total_profit || 0), 0); const totalStaked = runningBots.reduce((s, b) => s + (b.config?.staked_amount || 0), 0); addBotMsg(`📊 Bot Status\n- Active: ${runningBots.length}\n- Staked: $${totalStaked.toFixed(2)}\n- Profit: $${totalProfit.toFixed(2)}\n- Balance: $${usdtBalance.toFixed(2)}`); }
-    } else if (lowerMsg === "/help") addBotMsg("🤖 Commands: /status, /bots, /price <coin>, /clear, /toggle");
-    else if (lowerMsg === "/bots") { const botNames = filteredBots.slice(0, 10).map(b => `• ${b.name} (${b.tier || "free"})`).join("\n"); addBotMsg(`**Top bots:**\n${botNames}`); }
+      if (runningBots.length === 0) addBotMsg("📊 No running bots.");
+      else { const tp = runningBots.reduce((s, b) => s + (b.total_profit || 0), 0); const ts = runningBots.reduce((s, b) => s + (b.config?.staked_amount || 0), 0); addBotMsg(`📊 Active: ${runningBots.length} | Staked: $${ts.toFixed(2)} | Profit: $${tp.toFixed(2)}`); }
+    } else if (lowerMsg === "/help") addBotMsg("🤖 /status /bots /price <coin> /clear /toggle");
+    else if (lowerMsg === "/bots") addBotMsg(`**Top bots:**\n${filteredBots.slice(0, 10).map(b => `• ${b.name} (${b.tier})`).join("\n")}`);
     else if (lowerMsg === "/clear") { setChatMessages([]); addBotMsg("Chat cleared."); }
-    else if (lowerMsg === "/toggle") { setBotChatEnabled(prev => !prev); addBotMsg(`Bot trade messages ${!botChatEnabled ? "enabled ✅" : "disabled ❌"}.`); }
-    else if (lowerMsg.startsWith("/price")) { const symbolInput = msg.split(" ")[1]?.toUpperCase(); const found = prices.find(p => p.symbol.toLowerCase() === symbolInput?.toLowerCase()); if (found) addBotMsg(`💰 ${found.symbol.toUpperCase()}/USDT: $${found.current_price.toLocaleString()} (24h: ${found.price_change_percentage_24h?.toFixed(2)}%)`); else addBotMsg(`Coin "${symbolInput}" not found.`); }
-    else addBotMsg(`I'm here to help! Type /help for commands.`);
+    else if (lowerMsg === "/toggle") { setBotChatEnabled(prev => !prev); addBotMsg(`Bot messages ${!botChatEnabled ? "enabled ✅" : "disabled ❌"}.`); }
+    else if (lowerMsg.startsWith("/price")) { const sym = msg.split(" ")[1]?.toUpperCase(); const found = prices.find(p => p.symbol.toLowerCase() === sym?.toLowerCase()); if (found) addBotMsg(`💰 ${found.symbol.toUpperCase()}: $${found.current_price.toLocaleString()}`); else addBotMsg(`Coin "${sym}" not found.`); }
+    else addBotMsg(`Type /help for commands.`);
   };
+
+  // ─── Mobile chart data ───
+  const mobileChartData = useMemo(() => {
+    const cp = currentPrice || 60000;
+    return Array.from({ length: 30 }, (_, i) => ({ t: i, price: cp * (1 + (Math.sin(i * 0.3) * 0.01) + (Math.random() - 0.5) * 0.005) }));
+  }, [currentPrice]);
+
+  // ─── Pair selector component (shared) ───
+  const PairSelector = () => (
+    <div className="flex items-center gap-4">
+      <div className="relative" ref={dropdownRef}>
+        <button onClick={() => setPairDropdownOpen(!pairDropdownOpen)} className="flex gap-2 px-3 py-1.5 rounded-lg hover:bg-secondary transition-colors">
+          {selectedPairPrice?.image && <img src={selectedPairPrice.image} className="w-5 h-5 rounded-full" alt="" />}
+          <span className="text-sm font-bold">{chartPairName}</span>
+          <ChevronDown className={`h-4 w-4 transition-transform ${pairDropdownOpen ? "rotate-180" : ""}`} />
+        </button>
+        {pairDropdownOpen && (
+          <div className="absolute top-full left-0 mt-1 w-72 bg-card border rounded-xl shadow-2xl z-50">
+            <div className="p-2"><input type="text" value={pairSearch} onChange={e => setPairSearch(e.target.value)} placeholder="Search pairs..." className={`${inputCls} h-8 px-3 text-xs`} autoFocus /></div>
+            <div className="max-h-64 overflow-y-auto">
+              {TRADEABLE.filter(id => { const p = prices.find(pr => pr.id === id); return p && (p.name.toLowerCase().includes(pairSearch.toLowerCase()) || p.symbol.toLowerCase().includes(pairSearch.toLowerCase())); }).map(id => {
+                const p = prices.find(pr => pr.id === id);
+                if (!p) return null;
+                return (<button key={id} onClick={() => { setSelectedChartPair(id); setPairDropdownOpen(false); setPairSearch(""); }} className={`w-full flex justify-between px-3 py-2 text-xs hover:bg-secondary/80 transition-colors ${selectedChartPair === id ? "bg-primary/10" : ""}`}><div className="flex gap-2"><img src={p.image} className="w-5 h-5 rounded-full" alt="" /><span>{p.symbol.toUpperCase()}/USDT</span></div><div><span>${p.current_price.toLocaleString()}</span><span className={`ml-2 ${p.price_change_percentage_24h >= 0 ? "text-profit" : "text-loss"}`}>{p.price_change_percentage_24h >= 0 ? "+" : ""}{p.price_change_percentage_24h.toFixed(2)}%</span></div></button>);
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+      <div className="flex gap-2 items-center">
+        <span className="text-lg font-bold">${currentPrice.toLocaleString()}</span>
+        {selectedPairPrice && <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${selectedPairPrice.price_change_percentage_24h >= 0 ? "bg-profit/10 text-profit" : "bg-loss/10 text-loss"}`}>{selectedPairPrice.price_change_percentage_24h >= 0 ? "+" : ""}{selectedPairPrice.price_change_percentage_24h.toFixed(2)}%</span>}
+      </div>
+    </div>
+  );
 
   return (
     <DashboardLayout>
@@ -690,73 +640,72 @@ const BotsPage = () => {
           <Link to="/dashboard" className="flex gap-1 text-muted-foreground hover:text-foreground"><ChevronLeft className="h-4 w-4" /> Dashboard</Link>
           <div className="flex gap-1 font-semibold"><Bot className="h-4 w-4" /> Trading Bots</div>
           <DemoModeToggle />
-          {["Spot Grid", "Futures Grid", "DCA", "Arbitrage", "TWAP"].map(s => (<button key={s} className={`text-xs ${strategyFilter === s ? "text-foreground font-medium" : "text-muted-foreground"}`} onClick={() => setStrategyFilter(strategyFilter === s ? "All" : s)}>{s}</button>))}
           <span className="ml-auto text-xs">{chartPairName}</span>
         </div>
 
-        {/* Main content - two layouts */}
         <div className="flex-1 min-h-0 overflow-hidden">
-          {/* DESKTOP */}
+          {/* ─── DESKTOP ─── */}
           <div className="hidden md:flex h-full">
-            {/* Left: chart + tabs */}
             <div className="flex-1 flex flex-col min-w-0">
               <div className="px-4 py-2 flex items-center gap-4 border-b">
-                <div className="relative" ref={dropdownRef}>
-                  <button onClick={() => setPairDropdownOpen(!pairDropdownOpen)} className="flex gap-2 px-3 py-1.5 rounded-lg hover:bg-secondary"><img src={selectedPairPrice?.image} className="w-5 h-5 rounded-full" /><span className="text-sm font-bold">{chartPairName}</span><ChevronDown className={`h-4 w-4 transition-transform ${pairDropdownOpen ? "rotate-180" : ""}`} /></button>
-                  {pairDropdownOpen && <div className="absolute top-full left-0 mt-1 w-72 bg-card border rounded-xl shadow-2xl z-50"><div className="p-2"><input type="text" value={pairSearch} onChange={e => setPairSearch(e.target.value)} placeholder="Search pairs..." className="w-full h-8 rounded-lg bg-secondary px-3 text-xs" autoFocus /></div><div className="max-h-64 overflow-y-auto">{TRADEABLE.filter(id => { const p = prices.find(pr => pr.id === id); return p && (p.name.toLowerCase().includes(pairSearch.toLowerCase()) || p.symbol.toLowerCase().includes(pairSearch.toLowerCase())); }).map(id => { const p = prices.find(pr => pr.id === id); if (!p) return null; return (<button key={id} onClick={() => { setSelectedChartPair(id); setPairDropdownOpen(false); setPairSearch(""); }} className={`w-full flex justify-between px-3 py-2 text-xs hover:bg-secondary/80 ${selectedChartPair === id ? "bg-primary/10" : ""}`}><div className="flex gap-2"><img src={p.image} className="w-5 h-5 rounded-full" /><span>{p.symbol.toUpperCase()}/USDT</span></div><div><span>${p.current_price.toLocaleString()}</span><span className={`ml-2 ${p.price_change_percentage_24h >= 0 ? "text-profit" : "text-loss"}`}>{p.price_change_percentage_24h >= 0 ? "+" : ""}{p.price_change_percentage_24h.toFixed(2)}%</span></div></button>); })}</div></div>}
-                </div>
-                <div className="flex gap-2"><span className="text-lg font-bold">${currentPrice.toLocaleString()}</span>{selectedPairPrice && <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${selectedPairPrice.price_change_percentage_24h >= 0 ? "bg-profit/10 text-profit" : "bg-loss/10 text-loss"}`}>{selectedPairPrice.price_change_percentage_24h >= 0 ? "+" : ""}{selectedPairPrice.price_change_percentage_24h.toFixed(2)}%</span>}</div>
+                <PairSelector />
               </div>
-              {/* Chart area with explicit dimensions */}
+              {/* Chart — explicit min-height, no spinners or retries */}
               <div className="flex-1 bg-background relative min-h-[450px]">
-                {chartLoading && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-background/80 z-10">
-                    <RefreshCw className="h-6 w-6 animate-spin text-primary" />
+                {!chartLoaded && (
+                  <div className="absolute inset-0 flex items-center justify-center z-10">
+                    <div className="text-sm text-muted-foreground animate-pulse">Loading chart...</div>
                   </div>
                 )}
                 <div ref={chartRef} className="w-full h-full min-h-[450px]" />
               </div>
-              <div className="border-t bg-card"><div className="flex gap-6 px-4 overflow-x-auto">{(["running","history","pnl"] as const).map(t => (<button key={t} className={`py-3 text-sm font-medium border-b-2 ${bottomTab === t ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`} onClick={() => setBottomTab(t)}>{t === "running" ? "Running" : t === "history" ? "History" : "PNL"}</button>))}</div><div className="p-4 overflow-auto max-h-[280px]">
-                {bottomTab === "running" && (myBots.filter(b => b.status === "running").length === 0 ? <div className="text-center py-8 text-sm">No bots running.</div> : <div className="space-y-2">{myBots.filter(b => b.status === "running").map(bot => (<div key={bot.id} className="flex justify-between items-center p-3 bg-secondary/50 rounded-lg cursor-pointer" onClick={() => setViewingRunningBot(bot)}><div><p className="text-sm font-medium">{bot.name}</p><p className="text-[11px] text-muted-foreground">{getSymbol(bot.crypto_id)}/USDT • Staked: ${(bot.config?.staked_amount || 0).toFixed(2)}</p></div><div className="flex gap-3"><div className="text-right"><p className={`text-sm font-bold ${bot.total_profit >= 0 ? "text-profit" : "text-loss"}`}>{bot.total_profit >= 0 ? "+" : ""}${bot.total_profit.toFixed(2)}</p><p className="text-[10px]">{bot.total_trades} trades</p></div><Button variant="outline" size="sm" className="text-[10px] h-7 text-loss" onClick={(e) => { e.stopPropagation(); if (confirm("Stop bot?")) unstakeBot.mutate(bot); }}>Unstake</Button></div></div>))}</div>)}
-                {bottomTab === "history" && (userTrades.length === 0 ? <p className="text-center text-sm">No trade history.</p> : <div className="overflow-x-auto"><table className="w-full text-xs"><thead><tr className="text-muted-foreground"><th className="text-left py-2">Pair</th><th>Side</th><th className="text-right">Price</th><th className="text-right">Amount</th><th className="text-right">PNL</th><th className="text-right">Time</th></tr></thead><tbody>{userTrades.slice(0,20).map(t => (<tr key={t.id}><td>{getSymbol(t.crypto_id)}/USDT</td><td className={t.side==="buy"?"text-profit":"text-loss"}>{t.side}</td><td className="text-right">${Number(t.price).toLocaleString()}</td><td className="text-right">{Number(t.amount).toFixed(4)}</td><td className={`text-right ${(t.pnl||0)>=0?"text-profit":"text-loss"}`}>${(t.pnl||0).toFixed(2)}</td><td className="text-right text-muted-foreground">{new Date(t.created_at).toLocaleTimeString()}</td></tr>))}</tbody></table></div>)}
-                {bottomTab === "pnl" && (pnlChartData.length === 0 ? <div className="text-center py-8"><BarChart3 className="h-8 w-8 mx-auto opacity-30" /><p>No PNL data yet.</p></div> : <div className="h-64"><ResponsiveContainer><LineChart data={pnlChartData}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="date" /><YAxis /><RechartsTooltip /><Line type="monotone" dataKey="profit" stroke="#22c55e" strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></div>)}
-              </div></div>
+
+              {/* Bottom tabs */}
+              <div className="border-t bg-card">
+                <div className="flex gap-6 px-4 overflow-x-auto">
+                  {(["running", "history", "pnl"] as const).map(t => (
+                    <button key={t} className={`py-3 text-sm font-medium border-b-2 transition-colors ${bottomTab === t ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`} onClick={() => setBottomTab(t)}>
+                      {t === "running" ? "Running" : t === "history" ? "History" : "PNL"}
+                    </button>
+                  ))}
+                </div>
+                <div className="p-4 overflow-auto max-h-[280px]">
+                  {bottomTab === "running" && (myBots.filter(b => b.status === "running").length === 0 ? <div className="text-center py-8 text-sm text-muted-foreground">No bots running.</div> : <div className="space-y-2">{myBots.filter(b => b.status === "running").map(bot => (<div key={bot.id} className="flex justify-between items-center p-3 bg-secondary/50 rounded-lg cursor-pointer hover:bg-secondary/70 transition-colors" onClick={() => setViewingRunningBot(bot)}><div><p className="text-sm font-medium">{bot.name}</p><p className="text-[11px] text-muted-foreground">{getSymbol(bot.crypto_id)}/USDT • Staked: ${(bot.config?.staked_amount || 0).toFixed(2)}</p></div><div className="flex gap-3 items-center"><div className="text-right"><p className={`text-sm font-bold ${bot.total_profit >= 0 ? "text-profit" : "text-loss"}`}>{bot.total_profit >= 0 ? "+" : ""}${bot.total_profit.toFixed(2)}</p><p className="text-[10px] text-muted-foreground">{bot.total_trades} trades</p></div><Button variant="outline" size="sm" className="text-[10px] h-7 text-loss hover:bg-loss/10" onClick={(e) => { e.stopPropagation(); if (confirm("Stop bot?")) unstakeBot.mutate(bot); }}>Unstake</Button></div></div>))}</div>)}
+                  {bottomTab === "history" && (userTrades.length === 0 ? <p className="text-center text-sm text-muted-foreground">No trade history.</p> : <div className="overflow-x-auto"><table className="w-full text-xs"><thead><tr className="text-muted-foreground"><th className="text-left py-2">Pair</th><th>Side</th><th className="text-right">Price</th><th className="text-right">Amount</th><th className="text-right">PNL</th><th className="text-right">Time</th></tr></thead><tbody>{userTrades.slice(0,20).map(t => (<tr key={t.id} className="border-b border-border/30"><td>{getSymbol(t.crypto_id)}/USDT</td><td className={t.side==="buy"?"text-profit":"text-loss"}>{t.side}</td><td className="text-right">${Number(t.price).toLocaleString()}</td><td className="text-right">{Number(t.amount).toFixed(4)}</td><td className={`text-right ${(t.pnl||0)>=0?"text-profit":"text-loss"}`}>${(t.pnl||0).toFixed(2)}</td><td className="text-right text-muted-foreground">{new Date(t.created_at).toLocaleTimeString()}</td></tr>))}</tbody></table></div>)}
+                  {bottomTab === "pnl" && (pnlChartData.length === 0 ? <div className="text-center py-8 text-muted-foreground"><BarChart3 className="h-8 w-8 mx-auto opacity-30 mb-2" /><p>No PNL data yet.</p></div> : <div className="h-64"><ResponsiveContainer><LineChart data={pnlChartData}><CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" /><XAxis dataKey="date" tick={{ fontSize: 10 }} /><YAxis tick={{ fontSize: 10 }} /><RechartsTooltip /><Line type="monotone" dataKey="profit" stroke="hsl(var(--profit))" strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></div>)}
+                </div>
+              </div>
             </div>
+
             {/* Right sidebar */}
             <div className="w-[320px] lg:w-[360px] border-l bg-card flex flex-col overflow-hidden">
               {viewingRunningBot ? <BotAnalyticsView bot={viewingRunningBot} onBack={() => setViewingRunningBot(null)} onUnstake={(bot) => { unstakeBot.mutate(bot); setViewingRunningBot(null); }} unstaking={unstakeBot.isPending} /> :
                selectedBot ? <BotDetailPanel bot={selectedBot} /> :
                <div className="flex flex-col h-full overflow-y-auto">
-                 <div className="flex items-center gap-3 px-4 pt-4 pb-2"><button className={`text-sm px-3 py-1.5 rounded-lg ${mainTab === "popular" ? "bg-secondary" : "text-muted-foreground"}`} onClick={() => setMainTab("popular")}>Popular</button><button className={`text-sm px-3 py-1.5 rounded-lg flex gap-1 ${mainTab === "ai" ? "bg-primary/20 text-primary" : "text-muted-foreground"}`} onClick={() => setMainTab("ai")}><Zap className="h-3.5 w-3.5" /> AI</button><button className="ml-auto" onClick={() => runBotsNow.mutate()}><RefreshCw className="h-4 w-4" /></button></div>
-                 <div className="px-4 pb-2"><div className="relative"><Search className="h-3.5 w-3.5 absolute left-3 top-1/2" /><input type="text" placeholder="Search bots..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="w-full h-8 pl-9 pr-3 rounded-lg bg-secondary text-xs" /></div></div>
-                 <div className="flex gap-1.5 px-4 pb-2 flex-wrap">{TIER_FILTERS.map(t => (<button key={t} className={`text-[10px] font-bold px-2.5 py-1 rounded-full border ${tierFilter === t ? (t==="All Tiers"?"bg-primary/20 text-primary": t==="Free"?"bg-emerald-500/20 text-emerald-400": t==="Pro"?"bg-blue-500/20 text-blue-400": t==="Elite"?"bg-purple-500/20 text-purple-400":"bg-amber-500/20 text-amber-400") : "border-border text-muted-foreground"}`} onClick={() => setTierFilter(t)}>{t}</button>))}</div>
-                 <div className="flex gap-1.5 px-4 pb-3 flex-wrap">{STRATEGY_FILTERS.map(s => (<button key={s} className={`text-[10px] px-2 py-0.5 rounded border ${strategyFilter === s ? "bg-primary/20 text-primary" : "border-border text-muted-foreground"}`} onClick={() => setStrategyFilter(s)}>{s}</button>))}</div>
-                 {mainTab === "ai" && <div className="px-4 pb-3"><p className="text-[11px] flex gap-1"><Zap className="h-3 w-3 text-primary" /><span className="font-semibold text-primary">AI-Powered Bots</span></p></div>}
+                 <div className="flex items-center gap-3 px-4 pt-4 pb-2">
+                   <button className={`text-sm px-3 py-1.5 rounded-lg transition-colors ${mainTab === "popular" ? "bg-secondary font-medium" : "text-muted-foreground hover:text-foreground"}`} onClick={() => setMainTab("popular")}>Popular</button>
+                   <button className={`text-sm px-3 py-1.5 rounded-lg flex gap-1 transition-colors ${mainTab === "ai" ? "bg-primary/20 text-primary font-medium" : "text-muted-foreground hover:text-foreground"}`} onClick={() => setMainTab("ai")}><Zap className="h-3.5 w-3.5" /> AI</button>
+                   <button className="ml-auto hover:text-primary transition-colors" onClick={() => runBotsNow.mutate()} title="Run all bots"><RefreshCw className="h-4 w-4" /></button>
+                 </div>
+                 <div className="px-4 pb-2"><div className="relative"><Search className="h-3.5 w-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" /><input type="text" placeholder="Search bots..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className={`${inputCls} h-8 pl-9 pr-3 text-xs`} /></div></div>
+                 <div className="flex gap-1.5 px-4 pb-2 flex-wrap">{TIER_FILTERS.map(t => (<button key={t} className={`text-[10px] font-bold px-2.5 py-1 rounded-full border transition-colors ${tierFilter === t ? (t==="All Tiers"?"bg-primary/20 text-primary border-primary/30": t==="Free"?"bg-emerald-500/20 text-emerald-400 border-emerald-500/30": t==="Pro"?"bg-blue-500/20 text-blue-400 border-blue-500/30": t==="Elite"?"bg-purple-500/20 text-purple-400 border-purple-500/30":"bg-amber-500/20 text-amber-400 border-amber-500/30") : "border-border text-muted-foreground hover:border-muted-foreground"}`} onClick={() => setTierFilter(t)}>{t}</button>))}</div>
+                 <div className="flex gap-1.5 px-4 pb-3 flex-wrap">{STRATEGY_FILTERS.map(s => (<button key={s} className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${strategyFilter === s ? "bg-primary/20 text-primary border-primary/30" : "border-border text-muted-foreground hover:border-muted-foreground"}`} onClick={() => setStrategyFilter(s)}>{s}</button>))}</div>
                  <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-3">{filteredBots.map(bot => <BotCard key={bot.id} bot={bot} />)}</div>
-                 <div className="px-4 py-3 border-t"><p className="text-[10px]">Daily win % refreshes every 4 hours.</p></div>
+                 <div className="px-4 py-3 border-t text-[10px] text-muted-foreground">Daily win % refreshes every 4 hours.</div>
                </div>}
             </div>
           </div>
 
-          {/* MOBILE: single column with bottom tabs including "Bots" */}
+          {/* ─── MOBILE ─── */}
           <div className="flex flex-col h-full md:hidden">
-            {/* Chart area - using simple Recharts for mobile to avoid TradingView issues */}
-            <div className="flex-shrink-0 px-4 py-2 flex items-center gap-4 border-b">
-              <div className="relative" ref={dropdownRef}>
-                <button onClick={() => setPairDropdownOpen(!pairDropdownOpen)} className="flex gap-2 px-3 py-1.5 rounded-lg hover:bg-secondary"><img src={selectedPairPrice?.image} className="w-5 h-5 rounded-full" /><span className="text-sm font-bold">{chartPairName}</span><ChevronDown className={`h-4 w-4 transition-transform ${pairDropdownOpen ? "rotate-180" : ""}`} /></button>
-                {pairDropdownOpen && <div className="absolute top-full left-0 mt-1 w-64 bg-card border rounded-xl shadow-2xl z-50"><div className="p-2"><input type="text" value={pairSearch} onChange={e => setPairSearch(e.target.value)} placeholder="Search..." className="w-full h-8 rounded-lg bg-secondary px-3 text-xs" autoFocus /></div><div className="max-h-48 overflow-y-auto">{TRADEABLE.filter(id => { const p = prices.find(pr => pr.id === id); return p && (p.name.toLowerCase().includes(pairSearch.toLowerCase()) || p.symbol.toLowerCase().includes(pairSearch.toLowerCase())); }).map(id => { const p = prices.find(pr => pr.id === id); if (!p) return null; return (<button key={id} onClick={() => { setSelectedChartPair(id); setPairDropdownOpen(false); setPairSearch(""); }} className={`w-full flex justify-between px-3 py-2 text-xs ${selectedChartPair === id ? "bg-primary/10" : ""}`}><span>{p.symbol.toUpperCase()}</span><span>${p.current_price.toLocaleString()}</span></button>); })}</div></div>}
-              </div>
-              <div className="flex gap-2"><span className="text-lg font-bold">${currentPrice.toLocaleString()}</span>{selectedPairPrice && <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${selectedPairPrice.price_change_percentage_24h >= 0 ? "bg-profit/10 text-profit" : "bg-loss/10 text-loss"}`}>{selectedPairPrice.price_change_percentage_24h >= 0 ? "+" : ""}{selectedPairPrice.price_change_percentage_24h.toFixed(2)}%</span>}</div>
+            <div className="flex-shrink-0 px-4 py-2 flex items-center gap-4 border-b overflow-x-auto">
+              <PairSelector />
             </div>
-            <div className="h-48 bg-background p-2 relative">
+
+            {/* Mobile chart — lightweight Recharts */}
+            <div className="h-48 bg-background p-2">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={(() => {
-                  const cp = currentPrice || 60000;
-                  return Array.from({ length: 30 }, (_, i) => ({
-                    t: i,
-                    price: cp * (1 + (Math.sin(i * 0.3) * 0.01) + (Math.random() - 0.5) * 0.005),
-                  }));
-                })()}>
+                <LineChart data={mobileChartData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                   <XAxis dataKey="t" hide />
                   <YAxis domain={['auto', 'auto']} hide />
@@ -766,34 +715,31 @@ const BotsPage = () => {
               </ResponsiveContainer>
             </div>
 
-            {/* Bottom tabs: now includes "Bots" */}
-            <div className="border-t bg-card flex-shrink-0">
-              <div className="flex gap-4 px-4 overflow-x-auto">
-                {(["running","history","pnl","bots"] as const).map(t => (
-                  <button key={t} className={`py-3 text-sm font-medium border-b-2 whitespace-nowrap ${bottomTab === t ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`} onClick={() => setBottomTab(t)}>
+            {/* Bottom tabs with "Bots" tab */}
+            <div className="border-t bg-card flex-1 flex flex-col min-h-0">
+              <div className="flex gap-4 px-4 overflow-x-auto shrink-0">
+                {(["running", "history", "pnl", "bots"] as const).map(t => (
+                  <button key={t} className={`py-3 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${bottomTab === t ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`} onClick={() => setBottomTab(t)}>
                     {t === "running" ? "Running" : t === "history" ? "History" : t === "pnl" ? "PNL" : "Bots"}
                   </button>
                 ))}
               </div>
-              <div className="p-4 overflow-auto max-h-[240px]">
-                {bottomTab === "running" && (myBots.filter(b => b.status === "running").length === 0 ? <p className="text-center text-sm">No running bots.</p> : myBots.filter(b => b.status === "running").map(bot => (
+              <div className="p-4 overflow-auto flex-1">
+                {bottomTab === "running" && (myBots.filter(b => b.status === "running").length === 0 ? <p className="text-center text-sm text-muted-foreground">No running bots.</p> : myBots.filter(b => b.status === "running").map(bot => (
                   <div key={bot.id} className="flex justify-between items-center p-3 bg-secondary/50 rounded-lg mb-2 cursor-pointer" onClick={() => setViewingRunningBot(bot)}>
                     <div><p className="text-sm font-medium">{bot.name}</p><p className="text-[10px] text-muted-foreground">Staked: ${(bot.config?.staked_amount || 0).toFixed(2)}</p></div>
                     <div className="text-right"><p className={`text-sm font-bold ${bot.total_profit >= 0 ? "text-profit" : "text-loss"}`}>${bot.total_profit.toFixed(2)}</p><Button size="sm" variant="outline" className="text-[10px] h-6 mt-1" onClick={(e) => { e.stopPropagation(); setViewingRunningBot(bot); }}>Details</Button></div>
                   </div>
                 )))}
-                {bottomTab === "history" && (userTrades.length === 0 ? <p className="text-center text-sm">No history.</p> : <div className="space-y-1">{userTrades.slice(0,8).map(t => (<div key={t.id} className="text-xs flex justify-between border-b py-1"><span>{getSymbol(t.crypto_id)}</span><span className={t.side==="buy"?"text-profit":"text-loss"}>{t.side}</span><span>${Number(t.price).toFixed(2)}</span><span className={t.pnl>=0?"text-profit":"text-loss"}>${t.pnl?.toFixed(2)}</span></div>))}</div>)}
-                {bottomTab === "pnl" && (pnlChartData.length === 0 ? <p className="text-center text-sm">No data</p> : <div className="h-40"><ResponsiveContainer><LineChart data={pnlChartData}><Line type="monotone" dataKey="profit" stroke="#22c55e" strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></div>)}
+                {bottomTab === "history" && (userTrades.length === 0 ? <p className="text-center text-sm text-muted-foreground">No history.</p> : <div className="space-y-1">{userTrades.slice(0,8).map(t => (<div key={t.id} className="text-xs flex justify-between border-b border-border/30 py-1"><span>{getSymbol(t.crypto_id)}</span><span className={t.side==="buy"?"text-profit":"text-loss"}>{t.side}</span><span>${Number(t.price).toFixed(2)}</span><span className={t.pnl>=0?"text-profit":"text-loss"}>${t.pnl?.toFixed(2)}</span></div>))}</div>)}
+                {bottomTab === "pnl" && (pnlChartData.length === 0 ? <p className="text-center text-sm text-muted-foreground">No data</p> : <div className="h-40"><ResponsiveContainer><LineChart data={pnlChartData}><Line type="monotone" dataKey="profit" stroke="hsl(var(--profit))" strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></div>)}
                 {bottomTab === "bots" && (
-                  <div className="space-y-3 max-h-[400px] overflow-y-auto">
-                    {filteredBots.map(bot => <BotCard key={bot.id} bot={bot} />)}
-                    {filteredBots.length === 0 && <p className="text-center text-sm">No bots match filters.</p>}
-                  </div>
+                  <div className="space-y-3">{filteredBots.map(bot => <BotCard key={bot.id} bot={bot} />)}{filteredBots.length === 0 && <p className="text-center text-sm text-muted-foreground">No bots match.</p>}</div>
                 )}
               </div>
             </div>
 
-            {/* Detail view overlays when a bot is selected (full-screen on mobile) */}
+            {/* Mobile overlay for bot details */}
             {(viewingRunningBot || selectedBot) && (
               <div className="fixed inset-0 z-50 bg-background flex flex-col overflow-hidden">
                 <div className="p-3 border-b flex items-center gap-2 shrink-0 safe-top">
@@ -801,11 +747,7 @@ const BotsPage = () => {
                   <span className="font-semibold text-sm truncate">{viewingRunningBot?.name || selectedBot?.name}</span>
                 </div>
                 <div className="flex-1 overflow-y-auto overscroll-contain">
-                  {viewingRunningBot ? (
-                    <BotAnalyticsView bot={viewingRunningBot} onBack={() => setViewingRunningBot(null)} onUnstake={(bot) => { unstakeBot.mutate(bot); setViewingRunningBot(null); }} unstaking={unstakeBot.isPending} />
-                  ) : (
-                    <BotDetailPanel bot={selectedBot} />
-                  )}
+                  {viewingRunningBot ? <BotAnalyticsView bot={viewingRunningBot} onBack={() => setViewingRunningBot(null)} onUnstake={(bot) => { unstakeBot.mutate(bot); setViewingRunningBot(null); }} unstaking={unstakeBot.isPending} /> : <BotDetailPanel bot={selectedBot} />}
                 </div>
               </div>
             )}
@@ -813,9 +755,9 @@ const BotsPage = () => {
         </div>
 
         {/* Floating Chat */}
-        {!chatOpen && <button onClick={() => setChatOpen(true)} className="fixed bottom-6 right-6 bg-primary text-primary-foreground rounded-full p-3 shadow-lg z-50"><MessageSquare className="h-5 w-5" /></button>}
+        {!chatOpen && <button onClick={() => setChatOpen(true)} className="fixed bottom-6 right-6 bg-primary text-primary-foreground rounded-full p-3 shadow-lg z-40 hover:scale-105 transition-transform"><MessageSquare className="h-5 w-5" /></button>}
         {chatOpen && (
-          <div className="fixed bottom-6 right-6 w-80 h-96 bg-card border rounded-xl shadow-2xl flex flex-col z-50">
+          <div className="fixed bottom-6 right-6 w-80 h-96 bg-card border rounded-xl shadow-2xl flex flex-col z-40">
             <div className="flex justify-between px-4 py-2 border-b"><span className="text-sm font-semibold flex gap-2"><Bot className="h-4 w-4" /> Bot Chat</span><button onClick={() => setChatOpen(false)}><X className="h-4 w-4" /></button></div>
             <div className="flex-1 overflow-y-auto p-3 space-y-2">
               {chatMessages.slice().reverse().map(msg => (
@@ -829,18 +771,13 @@ const BotsPage = () => {
               <div ref={chatEndRef} />
             </div>
             <div className="p-2 border-t flex gap-2">
-              <input type="text" value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => e.key === "Enter" && handleSendMessage()} placeholder="Type /help..." className="flex-1 h-8 px-2 rounded-md bg-secondary text-xs" />
+              <input type="text" value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => e.key === "Enter" && handleSendMessage()} placeholder="Type /help..." className={`${inputCls} flex-1 h-8 px-2 text-xs`} />
               <Button size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={handleSendMessage}><Send className="h-3.5 w-3.5" /></Button>
             </div>
           </div>
         )}
       </div>
-      {stopSummary && (
-        <BotStopSummary
-          {...stopSummary}
-          onClose={() => setStopSummary(null)}
-        />
-      )}
+      {stopSummary && <BotStopSummary {...stopSummary} onClose={() => setStopSummary(null)} />}
     </DashboardLayout>
   );
 };
