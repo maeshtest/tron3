@@ -2,16 +2,15 @@ import { useEffect, useRef } from "react";
 
 interface TradingViewChartProps {
   symbol: string;
-  /** Optional custom height (e.g., "300px", "100%") */
-  height?: string;
 }
 
 /**
  * Simple, reliable TradingView embed — same method as FuturesPage.
  * No ResizeObserver, no retry loops.
- * Supports dark/light theme and responsive height.
+ * Responsive min-height: 300px on mobile, 450px on desktop.
+ * Automatically adapts to dark/light theme.
  */
-export default function TradingViewChart({ symbol, height = "min-h-[450px] md:min-h-[450px]" }: TradingViewChartProps) {
+export default function TradingViewChart({ symbol }: TradingViewChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -50,5 +49,6 @@ export default function TradingViewChart({ symbol, height = "min-h-[450px] md:mi
     };
   }, [symbol]);
 
-  return <div className={`w-full ${height}`} ref={containerRef} />;
+  // Responsive min-height: 300px on mobile, 450px on desktop
+  return <div className="w-full min-h-[300px] md:min-h-[450px]" ref={containerRef} />;
 }
