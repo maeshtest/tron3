@@ -10,6 +10,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { QRCodeSVG } from "qrcode.react";
 import DepositMethodSelector from "@/components/deposit/DepositMethodSelector";
+import CardDepositForm from "@/components/deposit/CardDepositForm";
 import MpesaDepositForm from "@/components/deposit/MpesaDepositForm";
 
 const COIN_META: Record<string, { symbol: string; name: string; color: string; networks: string[] }> = {
@@ -30,7 +31,7 @@ const MIN_USDT_EQUIVALENT = 20;
 
 const DepositPage = () => {
   const { settings, isLoading: settingsLoading } = useSiteSettingsDB();
-  const [depositMethod, setDepositMethod] = useState<"choose" | "crypto" | "fiat">("choose");
+  const [depositMethod, setDepositMethod] = useState<"choose" | "crypto" | "fiat" | "card">("choose");
   const { prices } = useCryptoPrices();
   const { user } = useAuth();
   const { fetchWallets } = useWallets();
@@ -245,6 +246,11 @@ const DepositPage = () => {
         {/* Method Selection */}
         {depositMethod === "choose" && (
           <DepositMethodSelector onSelect={(method) => setDepositMethod(method)} />
+        )}
+
+        {/* Card Payment */}
+        {depositMethod === "card" && (
+          <CardDepositForm onBack={() => setDepositMethod("choose")} />
         )}
 
         {/* M-PESA / Fiat */}
