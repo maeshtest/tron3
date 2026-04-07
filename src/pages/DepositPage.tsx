@@ -10,6 +10,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { QRCodeSVG } from "qrcode.react";
 import DepositMethodSelector from "@/components/deposit/DepositMethodSelector";
+import CardDepositForm from "@/components/deposit/CardDepositForm";
 import MpesaDepositForm from "@/components/deposit/MpesaDepositForm";
 
 const COIN_META: Record<string, { symbol: string; name: string; color: string; networks: string[] }> = {
