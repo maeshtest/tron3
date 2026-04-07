@@ -1,15 +1,18 @@
-import { Wallet, Smartphone, ArrowRight } from "lucide-react";
+import { Wallet, Smartphone, ArrowRight, CreditCard } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 interface Props {
-  onSelect: (method: "crypto" | "fiat") => void;
+  onSelect: (method: "crypto" | "fiat" | "card") => void;
 }
 
 const DepositMethodSelector = ({ onSelect }: Props) => {
+  const { t } = useTranslation();
+
   return (
     <div className="space-y-4">
       <div className="text-center">
-        <h1 className="text-2xl font-bold text-foreground">Deposit Funds</h1>
-        <p className="text-sm text-muted-foreground mt-1">Choose your preferred deposit method</p>
+        <h1 className="text-2xl font-bold text-foreground">{t("deposit.title")}</h1>
+        <p className="text-sm text-muted-foreground mt-1">{t("deposit.chooseMethod")}</p>
       </div>
 
       <div className="grid gap-3">
@@ -36,6 +39,32 @@ const DepositMethodSelector = ({ onSelect }: Props) => {
               </div>
             </div>
             <ArrowRight className="h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors shrink-0" />
+          </div>
+        </button>
+
+        {/* Card Payment */}
+        <button
+          onClick={() => onSelect("card")}
+          className="group relative bg-card border border-border rounded-2xl p-5 text-left hover:border-blue-500/50 transition-all"
+        >
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-blue-500/10 flex items-center justify-center shrink-0">
+              <CreditCard className="h-6 w-6 text-blue-500" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className="font-semibold text-foreground">{t("deposit.cardPayment")}</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {t("deposit.cardPaymentDesc")}
+              </p>
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {["Visa", "Mastercard", "Debit"].map(c => (
+                  <span key={c} className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-500 border border-blue-500/20">
+                    {c}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <ArrowRight className="h-5 w-5 text-muted-foreground group-hover:text-blue-500 transition-colors shrink-0" />
           </div>
         </button>
 
@@ -71,7 +100,7 @@ const DepositMethodSelector = ({ onSelect }: Props) => {
       </div>
 
       <p className="text-[10px] text-center text-muted-foreground">
-        Fiat deposits can be converted to crypto anytime from your wallet
+        {t("deposit.fiatConvertNote")}
       </p>
     </div>
   );

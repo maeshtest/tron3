@@ -8,6 +8,14 @@ const LANGUAGES = [
   { code: "fr", label: "Français", flag: "🇫🇷" },
   { code: "hi", label: "हिन्दी", flag: "🇮🇳" },
   { code: "es", label: "Español", flag: "🇪🇸" },
+  { code: "pt", label: "Português", flag: "🇧🇷" },
+  { code: "zh", label: "中文", flag: "🇨🇳" },
+  { code: "ja", label: "日本語", flag: "🇯🇵" },
+  { code: "ko", label: "한국어", flag: "🇰🇷" },
+  { code: "ru", label: "Русский", flag: "🇷🇺" },
+  { code: "de", label: "Deutsch", flag: "🇩🇪" },
+  { code: "it", label: "Italiano", flag: "🇮🇹" },
+  { code: "tr", label: "Türkçe", flag: "🇹🇷" },
 ];
 
 const LanguageSelector = ({ compact = false }: { compact?: boolean }) => {
