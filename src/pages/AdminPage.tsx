@@ -590,6 +590,7 @@ const AdminPage = () => {
         {tab === "roles" && <RolesManagementTab />}
         {tab === "security_logs" && <SecurityLogsTab />}
         {tab === "announcements" && <AnnouncementsTab />}
+        {tab === "email_tool" && <EmailToolTab />}
 
         {/* ─── SETTINGS ─── */}
         {tab === "settings" && (
