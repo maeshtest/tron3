@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Smartphone, Loader2, Check, AlertTriangle, RefreshCw } from "lucide-react";
+import { ArrowLeft, Smartphone, Loader2, Check, AlertTriangle, RefreshCw, Globe } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -9,27 +9,50 @@ interface Props {
   onBack: () => void;
 }
 
-const QUICK_KES = [500, 1000, 2500, 5000, 10000, 25000];
-const KES_TO_USD_RATE = 0.0077; // ~1 USD = 130 KES
+// M-PESA supported countries
+const MPESA_COUNTRIES = [
+  { code: "KE", name: "Kenya", dialCode: "254", phoneLength: 9, currency: "KES", rateToUSD: 0.0077 },
+  { code: "TZ", name: "Tanzania", dialCode: "255", phoneLength: 9, currency: "TZS", rateToUSD: 0.00038 },
+  { code: "UG", name: "Uganda", dialCode: "256", phoneLength: 9, currency: "UGX", rateToUSD: 0.00027 },
+  { code: "RW", name: "Rwanda", dialCode: "250", phoneLength: 9, currency: "RWF", rateToUSD: 0.00078 },
+  { code: "CD", name: "DR Congo", dialCode: "243", phoneLength: 9, currency: "CDF", rateToUSD: 0.00038 },
+  { code: "MZ", name: "Mozambique", dialCode: "258", phoneLength: 9, currency: "MZN", rateToUSD: 0.0157 },
+];
 
-// Normalize phone number to 2547XXXXXXXX (no '+', no leading zero)
-const normalizePhoneNumber = (raw: string): string => {
+// Quick amounts in local currency (KES, TZS, etc.) – will be converted per country
+const QUICK_AMOUNTS = [500, 1000, 2500, 5000, 10000, 25000];
+
+// Normalize phone number to international format (no '+')
+const normalizePhoneNumber = (raw: string, dialCode: string, expectedLength: number): string => {
   let cleaned = raw.replace(/\D/g, '');
-  if (cleaned.startsWith('0')) {
-    cleaned = '254' + cleaned.slice(1);
-  } else if (raw.startsWith('+254')) {
-    cleaned = raw.slice(1);
-  } else if (!cleaned.startsWith('254')) {
-    throw new Error('Phone number must start with 254, 0, or +254');
+  
+  // Remove leading dial code if present
+  if (cleaned.startsWith(dialCode)) {
+    cleaned = cleaned.slice(dialCode.length);
   }
-  if (cleaned.length !== 12 || !cleaned.startsWith('2547')) {
-    throw new Error('Invalid Safaricom number. Use format 2547XXXXXXXX');
+  // Remove leading '0' if present (common in local dialing)
+  else if (cleaned.startsWith('0')) {
+    cleaned = cleaned.slice(1);
   }
-  return cleaned;
+  // If starts with '+', remove it
+  if (raw.startsWith('+')) {
+    cleaned = raw.slice(1).replace(/\D/g, '');
+    if (cleaned.startsWith(dialCode)) {
+      cleaned = cleaned.slice(dialCode.length);
+    }
+  }
+  
+  // Validate length
+  if (cleaned.length !== expectedLength) {
+    throw new Error(`Phone number must be ${expectedLength} digits after ${dialCode}`);
+  }
+  
+  return dialCode + cleaned;
 };
 
 const MpesaDepositForm = ({ onBack }: Props) => {
   const { user } = useAuth();
+  const [selectedCountry, setSelectedCountry] = useState(MPESA_COUNTRIES[0]); // default Kenya
   const [phone, setPhone] = useState("");
   const [amount, setAmount] = useState("");
   const [step, setStep] = useState<"form" | "pending" | "success" | "failed">("form");
@@ -49,23 +72,24 @@ const MpesaDepositForm = ({ onBack }: Props) => {
 
     let normalizedPhone: string;
     try {
-      normalizedPhone = normalizePhoneNumber(phone);
+      normalizedPhone = normalizePhoneNumber(phone, selectedCountry.dialCode, selectedCountry.phoneLength);
     } catch (err: any) {
       toast.error(err.message);
       return;
     }
 
     const amt = Number(amount);
-    if (!amt || amt < 50) return toast.error("Minimum deposit is KES 50");
+    if (!amt || amt < 50) return toast.error(`Minimum deposit is ${selectedCountry.currency} 50`);
 
     setLoading(true);
     try {
       const { data, error } = await supabase.functions.invoke("mpesa-stk-push", {
         body: {
-          phone_number: normalizedPhone,  // Send WITHOUT '+', e.g. "254712345678"
+          phone_number: normalizedPhone,
           amount: amt,
           user_id: user.id,
-          currency: "KES",
+          currency: selectedCountry.currency,
+          country: selectedCountry.code,
         },
       });
 
@@ -91,7 +115,6 @@ const MpesaDepositForm = ({ onBack }: Props) => {
     pollRef.current = setInterval(async () => {
       setPollCount(prev => {
         if (prev >= 30) {
-          // 5 min timeout (10s * 30)
           if (pollRef.current) clearInterval(pollRef.current);
           setStep("failed");
           return prev;
@@ -111,7 +134,7 @@ const MpesaDepositForm = ({ onBack }: Props) => {
       if (data && data.length > 0) {
         const latest = data[0];
         const created = new Date(latest.created_at).getTime();
-        if (Date.now() - created < 600000) { // within 10 minutes
+        if (Date.now() - created < 600000) {
           if (pollRef.current) clearInterval(pollRef.current);
           setStep("success");
           toast.success("M-PESA payment received!");
@@ -120,8 +143,8 @@ const MpesaDepositForm = ({ onBack }: Props) => {
     }, 10000);
   };
 
-  const usdEquivalent = (Number(amount) * KES_TO_USD_RATE).toFixed(2);
-  const displayPhone = phone ? `254${phone}` : "";
+  const usdEquivalent = (Number(amount) * selectedCountry.rateToUSD).toFixed(2);
+  const displayPhoneHint = `e.g., ${selectedCountry.dialCode}${'7'.repeat(selectedCountry.phoneLength)} or 0${'7'.repeat(selectedCountry.phoneLength)}`;
 
   return (
     <div className="space-y-4">
@@ -134,29 +157,53 @@ const MpesaDepositForm = ({ onBack }: Props) => {
           <Smartphone className="h-7 w-7 text-emerald-500" />
         </div>
         <h2 className="text-xl font-bold text-foreground">M-PESA Deposit</h2>
-        <p className="text-xs text-muted-foreground mt-1">Funds will be added to your fiat (USD) wallet</p>
+        <p className="text-xs text-muted-foreground mt-1">Funds will be added to your USD wallet</p>
       </div>
 
       {step === "form" && (
         <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
+          {/* Country Selector */}
+          <div>
+            <label className="block text-sm font-medium text-foreground mb-1.5">Country</label>
+            <div className="relative">
+              <Globe className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <select
+                value={selectedCountry.code}
+                onChange={(e) => {
+                  const country = MPESA_COUNTRIES.find(c => c.code === e.target.value);
+                  if (country) {
+                    setSelectedCountry(country);
+                    setPhone(""); // reset phone when country changes
+                  }
+                }}
+                className="w-full h-12 pl-9 pr-4 rounded-xl bg-secondary border border-border text-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
+              >
+                {MPESA_COUNTRIES.map(c => (
+                  <option key={c.code} value={c.code}>{c.name} ({c.currency})</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Phone Number */}
           <div>
             <label className="block text-sm font-medium text-foreground mb-1.5">Phone Number</label>
             <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">+254</span>
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">+{selectedCountry.dialCode}</span>
               <input
                 type="tel"
                 value={phone}
-                onChange={e => setPhone(e.target.value.replace(/\D/g, "").slice(0, 9))}
-                placeholder="7XXXXXXXX"
-                maxLength={9}
-                className="w-full h-12 pl-14 pr-4 rounded-xl bg-secondary border border-border text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
+                onChange={e => setPhone(e.target.value.replace(/\D/g, "").slice(0, selectedCountry.phoneLength + 3))} // allow extra digits for country code
+                placeholder={`${selectedCountry.dialCode}xxxxxxxx`}
+                className="w-full h-12 pl-16 pr-4 rounded-xl bg-secondary border border-border text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
               />
             </div>
-            <p className="text-[10px] text-muted-foreground mt-1">Enter 9-digit number after 254 (e.g., 712345678)</p>
+            <p className="text-[10px] text-muted-foreground mt-1">{displayPhoneHint}</p>
           </div>
 
+          {/* Amount */}
           <div>
-            <label className="block text-sm font-medium text-foreground mb-1.5">Amount (KES)</label>
+            <label className="block text-sm font-medium text-foreground mb-1.5">Amount ({selectedCountry.currency})</label>
             <input
               type="number"
               value={amount}
@@ -170,8 +217,9 @@ const MpesaDepositForm = ({ onBack }: Props) => {
             )}
           </div>
 
+          {/* Quick Amounts */}
           <div className="flex flex-wrap gap-2">
-            {QUICK_KES.map(amt => (
+            {QUICK_AMOUNTS.map(amt => (
               <button
                 key={amt}
                 onClick={() => setAmount(amt.toString())}
@@ -181,19 +229,20 @@ const MpesaDepositForm = ({ onBack }: Props) => {
                     : "border-border bg-secondary text-muted-foreground hover:border-emerald-500/40"
                 }`}
               >
-                KES {amt.toLocaleString()}
+                {selectedCountry.currency} {amt.toLocaleString()}
               </button>
             ))}
           </div>
 
+          {/* Summary */}
           <div className="bg-secondary/50 rounded-xl p-3 space-y-1.5">
             <div className="flex justify-between text-xs">
               <span className="text-muted-foreground">Amount</span>
-              <span className="text-foreground">KES {Number(amount || 0).toLocaleString()}</span>
+              <span className="text-foreground">{selectedCountry.currency} {Number(amount || 0).toLocaleString()}</span>
             </div>
             <div className="flex justify-between text-xs">
               <span className="text-muted-foreground">Exchange Rate</span>
-              <span className="text-foreground">1 USD ≈ {(1 / KES_TO_USD_RATE).toFixed(0)} KES</span>
+              <span className="text-foreground">1 USD ≈ {(1 / selectedCountry.rateToUSD).toFixed(0)} {selectedCountry.currency}</span>
             </div>
             <div className="border-t border-border pt-1.5 flex justify-between text-sm font-semibold">
               <span className="text-foreground">You receive</span>
@@ -204,10 +253,10 @@ const MpesaDepositForm = ({ onBack }: Props) => {
           <Button
             className="w-full h-12 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold"
             onClick={handleSubmit}
-            disabled={loading || !phone || phone.length < 9 || !amount || Number(amount) < 50}
+            disabled={loading || !phone || !amount || Number(amount) < 50}
           >
             {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Smartphone className="h-4 w-4 mr-2" />}
-            {loading ? "Sending prompt..." : "Pay with M-PESA"}
+            {loading ? "Sending prompt..." : `Pay with M-PESA (${selectedCountry.currency})`}
           </Button>
 
           <p className="text-[10px] text-center text-muted-foreground">
@@ -216,6 +265,7 @@ const MpesaDepositForm = ({ onBack }: Props) => {
         </div>
       )}
 
+      {/* Pending, Success, Failed states (same as before) */}
       {step === "pending" && (
         <div className="bg-card border border-border rounded-2xl p-6 text-center space-y-4">
           <div className="w-16 h-16 rounded-full bg-amber-500/10 flex items-center justify-center mx-auto animate-pulse">
@@ -226,8 +276,8 @@ const MpesaDepositForm = ({ onBack }: Props) => {
             Check your phone and enter your M-PESA PIN to complete the payment
           </p>
           <div className="bg-secondary rounded-xl p-3">
-            <p className="text-xs text-muted-foreground">Amount: <span className="text-foreground font-medium">KES {Number(amount).toLocaleString()}</span></p>
-            <p className="text-xs text-muted-foreground mt-1">Phone: <span className="text-foreground font-medium">+254{phone}</span></p>
+            <p className="text-xs text-muted-foreground">Amount: <span className="text-foreground font-medium">{selectedCountry.currency} {Number(amount).toLocaleString()}</span></p>
+            <p className="text-xs text-muted-foreground mt-1">Phone: <span className="text-foreground font-medium">+{selectedCountry.dialCode}{phone.replace(/\D/g, '').slice(-selectedCountry.phoneLength)}</span></p>
           </div>
           <p className="text-[10px] text-muted-foreground">
             Polling... ({pollCount}/30) — This may take up to 5 minutes
@@ -245,7 +295,7 @@ const MpesaDepositForm = ({ onBack }: Props) => {
           </div>
           <h3 className="text-lg font-bold text-foreground">Payment Received!</h3>
           <p className="text-sm text-muted-foreground">
-            KES {Number(amount).toLocaleString()} (≈ ${usdEquivalent} USD) has been received and is pending admin approval.
+            {selectedCountry.currency} {Number(amount).toLocaleString()} (≈ ${usdEquivalent} USD) has been received and is pending admin approval.
           </p>
           <div className="flex gap-2 justify-center">
             <Button variant="outline" size="sm" onClick={() => { setStep("form"); setAmount(""); setPhone(""); }}>
