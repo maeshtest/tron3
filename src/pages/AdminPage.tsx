@@ -36,7 +36,7 @@ const ALL_CRYPTOS = [
   { id: "stellar", name: "Stellar", symbol: "XLM" },
 ];
 
-type Tab = "overview" | "transactions" | "wallets" | "bots" | "users" | "kyc" | "roles" | "security_logs" | "announcements" | "settings";
+type Tab = "overview" | "transactions" | "wallets" | "bots" | "users" | "kyc" | "roles" | "security_logs" | "announcements" | "email_tool" | "settings";
 
 const formatNumber = (num: number) => {
   if (num >= 1e9) return `${(num / 1e9).toFixed(2)}B`;
