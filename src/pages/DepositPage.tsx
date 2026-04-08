@@ -49,6 +49,9 @@ const DepositPage = () => {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Card payment amount tracking (fix: disable $0 button)
+  const [cardAmount, setCardAmount] = useState(0);
+
   // Build wallet entries from settings
   const walletEntries = Object.entries(settings?.deposit_wallets || {})
     .filter(([_, val]) => val?.address)
@@ -74,9 +77,7 @@ const DepositPage = () => {
 
   // Sync network with selected coin
   useEffect(() => {
-    if (selected) {
-      setSelectedNetwork(selected.network);
-    }
+    if (selected) setSelectedNetwork(selected.network);
   }, [selectedIdx, selected?.network]);
 
   // Fetch deposit history
@@ -94,7 +95,7 @@ const DepositPage = () => {
     fetchHistory();
   }, [user, monitorStatus]);
 
-  // Cleanup intervals on unmount
+  // Cleanup intervals
   useEffect(() => {
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
@@ -134,9 +135,7 @@ const DepositPage = () => {
 
     const amt = Number(depositAmount);
     if (amt < selected.minAmount) {
-      toast.warning(
-        `Minimum deposit is ${selected.minAmount.toFixed(selected.id === "tether" ? 2 : 8)} ${selected.symbol}`
-      );
+      toast.warning(`Minimum deposit is ${selected.minAmount.toFixed(selected.id === "tether" ? 2 : 8)} ${selected.symbol}`);
       return;
     }
 
@@ -248,12 +247,16 @@ const DepositPage = () => {
           <DepositMethodSelector onSelect={(method) => setDepositMethod(method)} />
         )}
 
-        {/* Card Payment */}
+        {/* Card Payment - pass amount state to disable $0 button */}
         {depositMethod === "card" && (
-          <CardDepositForm onBack={() => setDepositMethod("choose")} />
+          <CardDepositForm
+            onBack={() => setDepositMethod("choose")}
+            amount={cardAmount}
+            setAmount={setCardAmount}
+          />
         )}
 
-        {/* M-PESA / Fiat */}
+        {/* M-PESA / Fiat - phone number normalization is inside MpesaDepositForm */}
         {depositMethod === "fiat" && (
           <MpesaDepositForm onBack={() => setDepositMethod("choose")} />
         )}
