@@ -36,6 +36,18 @@ async function getAccessToken(clientId: string, clientSecret: string, baseUrl: s
   return cachedToken.token;
 }
 
+// Normalize phone number to 2547XXXXXXXX (no '+', no leading zero)
+function normalizePhoneNumber(raw: string): string {
+  let cleaned = raw.replace(/\D/g, '');
+  if (cleaned.startsWith('0')) cleaned = '254' + cleaned.slice(1);
+  else if (raw.startsWith('+254')) cleaned = raw.slice(1);
+  else if (!cleaned.startsWith('254')) throw new Error('Phone must start with 254, 0, or +254');
+  if (cleaned.length !== 12 || !cleaned.startsWith('2547')) {
+    throw new Error('Invalid Safaricom number. Use 2547XXXXXXXX');
+  }
+  return cleaned;
+}
+
 async function verifySignature(body: string, signature: string, secret: string): Promise<boolean> {
   const encoder = new TextEncoder();
   const key = await crypto.subtle.importKey(
@@ -68,7 +80,13 @@ Deno.serve(async (req) => {
     const { data: settingsRows } = await supabase
       .from("site_settings")
       .select("key, value")
-      .in("key", ["kopokopo_client_id", "kopokopo_client_secret", "kopokopo_till_number", "kopokopo_api_base_url"]);
+      .in("key", [
+        "kopokopo_client_id",
+        "kopokopo_client_secret",
+        "kopokopo_till_number",
+        "kopokopo_api_base_url",
+        "kopokopo_webhook_secret", // optional, for signature verification
+      ]);
 
     const cfg: Record<string, string> = {};
     settingsRows?.forEach((r: any) => { cfg[r.key] = r.value; });
@@ -77,14 +95,15 @@ Deno.serve(async (req) => {
     const clientSecret = cfg.kopokopo_client_secret;
     const tillNumber = cfg.kopokopo_till_number;
     const baseUrl = cfg.kopokopo_api_base_url || "https://sandbox.kopokopo.com";
+    const webhookSecret = cfg.kopokopo_webhook_secret || clientSecret; // fallback
 
     // ─── WEBHOOK CALLBACK ───
     if (path === "webhook") {
       const rawBody = await req.text();
       const signature = req.headers.get("X-KopoKopo-Signature") || "";
 
-      if (clientSecret && signature) {
-        const valid = await verifySignature(rawBody, signature, clientSecret);
+      if (webhookSecret && signature) {
+        const valid = await verifySignature(rawBody, signature, webhookSecret);
         if (!valid) {
           console.error("Invalid webhook signature");
           return new Response(JSON.stringify({ error: "Invalid signature" }), {
@@ -102,7 +121,7 @@ Deno.serve(async (req) => {
 
       console.log("M-PESA webhook received:", { status, reference, metadata });
 
-      // Idempotency: check if already processed
+      // Idempotency
       const { data: existing } = await supabase
         .from("transactions")
         .select("id")
@@ -121,14 +140,14 @@ Deno.serve(async (req) => {
         const phone = resource?.sender_phone_number || metadata?.phone;
 
         if (userId && amount > 0) {
-          // Create completed deposit transaction
+          // Create pending deposit transaction (admin approval still required)
           await supabase.from("transactions").insert({
             user_id: userId,
             type: "deposit",
-            crypto_id: "tether", // Fiat deposits go to USDT wallet
+            crypto_id: "tether",
             amount: amount,
-            usd_amount: amount, // KES amount (admin can adjust exchange rate)
-            status: "pending", // Admin approval still required
+            usd_amount: amount, // assuming KES; admin can adjust exchange rate later
+            status: "pending",
             wallet_address: phone || "M-PESA",
             network: "M-PESA",
             tx_hash: reference,
@@ -177,35 +196,33 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Format phone: ensure +254 format
-    let formattedPhone = phone_number.replace(/\s+/g, "");
-    if (formattedPhone.startsWith("0")) formattedPhone = "+254" + formattedPhone.slice(1);
-    if (!formattedPhone.startsWith("+")) formattedPhone = "+" + formattedPhone;
+    // Normalize phone number to 2547XXXXXXXX (no '+')
+    let formattedPhone: string;
+    try {
+      formattedPhone = normalizePhoneNumber(phone_number);
+    } catch (err: any) {
+      return new Response(JSON.stringify({ error: err.message }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     const token = await getAccessToken(clientId, clientSecret, baseUrl);
 
     const callbackUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/mpesa-stk-push/webhook`;
 
     const stkPayload = {
-      payment_channel: "M-PESA",
+      payment_channel: "M-PESA STK Push",  // Kopo Kopo expects this exact string
       till_number: tillNumber,
-      subscriber: {
-        first_name: "Customer",
-        last_name: "",
-        phone_number: formattedPhone,
-      },
-      amount: {
-        currency: currency,
-        value: Number(amount),
-      },
+      phone_number: formattedPhone,        // ✅ No '+', just 2547XXXXXXXX
+      amount: Number(amount),
+      currency: currency,
+      callback_url: callbackUrl,
       metadata: {
         user_id: user_id,
         phone: formattedPhone,
         amount: amount,
         monitor_id: monitor_id || null,
-      },
-      _links: {
-        callback_url: callbackUrl,
       },
     };
 
@@ -221,16 +238,33 @@ Deno.serve(async (req) => {
       body: JSON.stringify(stkPayload),
     });
 
+    // ✅ Safe response handling – read as text first
+    const rawResponse = await stkRes.text();
+    let stkData;
+    try {
+      stkData = JSON.parse(rawResponse);
+    } catch (e) {
+      console.error("Failed to parse JSON. Raw response:", rawResponse);
+      return new Response(JSON.stringify({
+        error: "Invalid response from Kopo Kopo",
+        details: rawResponse.slice(0, 200),
+      }), {
+        status: 502,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     if (!stkRes.ok) {
-      const errText = await stkRes.text();
-      console.error("STK Push failed:", stkRes.status, errText);
-      return new Response(JSON.stringify({ error: "STK push failed", details: errText }), {
+      console.error("STK Push failed:", stkRes.status, stkData);
+      return new Response(JSON.stringify({
+        error: "STK push failed",
+        details: stkData,
+      }), {
         status: stkRes.status,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const stkData = await stkRes.json();
     const locationHeader = stkRes.headers.get("Location") || stkData?.data?.id;
 
     return new Response(JSON.stringify({
