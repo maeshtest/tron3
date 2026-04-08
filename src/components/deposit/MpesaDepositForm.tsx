@@ -12,6 +12,22 @@ interface Props {
 const QUICK_KES = [500, 1000, 2500, 5000, 10000, 25000];
 const KES_TO_USD_RATE = 0.0077; // ~1 USD = 130 KES
 
+// Normalize phone number to 2547XXXXXXXX (no '+', no leading zero)
+const normalizePhoneNumber = (raw: string): string => {
+  let cleaned = raw.replace(/\D/g, '');
+  if (cleaned.startsWith('0')) {
+    cleaned = '254' + cleaned.slice(1);
+  } else if (raw.startsWith('+254')) {
+    cleaned = raw.slice(1);
+  } else if (!cleaned.startsWith('254')) {
+    throw new Error('Phone number must start with 254, 0, or +254');
+  }
+  if (cleaned.length !== 12 || !cleaned.startsWith('2547')) {
+    throw new Error('Invalid Safaricom number. Use format 2547XXXXXXXX');
+  }
+  return cleaned;
+};
+
 const MpesaDepositForm = ({ onBack }: Props) => {
   const { user } = useAuth();
   const [phone, setPhone] = useState("");
@@ -30,7 +46,15 @@ const MpesaDepositForm = ({ onBack }: Props) => {
 
   const handleSubmit = async () => {
     if (!user) return toast.error("Not authenticated");
-    if (!phone || phone.length < 9) return toast.error("Enter a valid phone number");
+
+    let normalizedPhone: string;
+    try {
+      normalizedPhone = normalizePhoneNumber(phone);
+    } catch (err: any) {
+      toast.error(err.message);
+      return;
+    }
+
     const amt = Number(amount);
     if (!amt || amt < 50) return toast.error("Minimum deposit is KES 50");
 
@@ -38,7 +62,7 @@ const MpesaDepositForm = ({ onBack }: Props) => {
     try {
       const { data, error } = await supabase.functions.invoke("mpesa-stk-push", {
         body: {
-          phone_number: phone,
+          phone_number: normalizedPhone,  // Send WITHOUT '+', e.g. "254712345678"
           amount: amt,
           user_id: user.id,
           currency: "KES",
@@ -53,6 +77,7 @@ const MpesaDepositForm = ({ onBack }: Props) => {
       toast.success("Check your phone for the M-PESA prompt!");
       startPolling();
     } catch (err: any) {
+      console.error("M-PESA error:", err);
       toast.error(err.message || "Failed to initiate M-PESA payment");
     } finally {
       setLoading(false);
@@ -66,7 +91,7 @@ const MpesaDepositForm = ({ onBack }: Props) => {
     pollRef.current = setInterval(async () => {
       setPollCount(prev => {
         if (prev >= 30) {
-          // 5 min timeout
+          // 5 min timeout (10s * 30)
           if (pollRef.current) clearInterval(pollRef.current);
           setStep("failed");
           return prev;
@@ -74,7 +99,6 @@ const MpesaDepositForm = ({ onBack }: Props) => {
         return prev + 1;
       });
 
-      // Check for new M-PESA transaction
       if (!user) return;
       const { data } = await supabase
         .from("transactions")
@@ -87,8 +111,7 @@ const MpesaDepositForm = ({ onBack }: Props) => {
       if (data && data.length > 0) {
         const latest = data[0];
         const created = new Date(latest.created_at).getTime();
-        if (Date.now() - created < 600000) {
-          // Within 10 min
+        if (Date.now() - created < 600000) { // within 10 minutes
           if (pollRef.current) clearInterval(pollRef.current);
           setStep("success");
           toast.success("M-PESA payment received!");
@@ -98,6 +121,7 @@ const MpesaDepositForm = ({ onBack }: Props) => {
   };
 
   const usdEquivalent = (Number(amount) * KES_TO_USD_RATE).toFixed(2);
+  const displayPhone = phone ? `254${phone}` : "";
 
   return (
     <div className="space-y-4">
@@ -122,12 +146,13 @@ const MpesaDepositForm = ({ onBack }: Props) => {
               <input
                 type="tel"
                 value={phone}
-                onChange={e => setPhone(e.target.value.replace(/\D/g, ""))}
+                onChange={e => setPhone(e.target.value.replace(/\D/g, "").slice(0, 9))}
                 placeholder="7XXXXXXXX"
-                maxLength={10}
+                maxLength={9}
                 className="w-full h-12 pl-14 pr-4 rounded-xl bg-secondary border border-border text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
               />
             </div>
+            <p className="text-[10px] text-muted-foreground mt-1">Enter 9-digit number after 254 (e.g., 712345678)</p>
           </div>
 
           <div>
@@ -179,7 +204,7 @@ const MpesaDepositForm = ({ onBack }: Props) => {
           <Button
             className="w-full h-12 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold"
             onClick={handleSubmit}
-            disabled={loading || !phone || !amount}
+            disabled={loading || !phone || phone.length < 9 || !amount || Number(amount) < 50}
           >
             {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Smartphone className="h-4 w-4 mr-2" />}
             {loading ? "Sending prompt..." : "Pay with M-PESA"}
