@@ -154,6 +154,7 @@ const CardDepositForm = ({ onBack }: Props) => {
             value={cardName}
             onChange={(e) => setCardName(e.target.value)}
             placeholder="John Doe"
+            autoComplete="cc-name"
             className="w-full h-10 rounded-xl bg-secondary border border-border px-4 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all"
           />
         </div>
@@ -166,6 +167,8 @@ const CardDepositForm = ({ onBack }: Props) => {
             onChange={(e) => setCardNumber(formatCardNumber(e.target.value))}
             placeholder="4242 4242 4242 4242"
             maxLength={19}
+            autoComplete="cc-number"
+            inputMode="numeric"
             className="w-full h-10 rounded-xl bg-secondary border border-border px-4 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all font-mono tracking-wider"
           />
         </div>
@@ -179,6 +182,8 @@ const CardDepositForm = ({ onBack }: Props) => {
               onChange={(e) => setExpiry(formatExpiry(e.target.value))}
               placeholder="MM/YY"
               maxLength={5}
+              autoComplete="cc-exp"
+              inputMode="numeric"
               className="w-full h-10 rounded-xl bg-secondary border border-border px-4 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all font-mono"
             />
           </div>
@@ -190,6 +195,8 @@ const CardDepositForm = ({ onBack }: Props) => {
               onChange={(e) => setCvv(e.target.value.replace(/\D/g, "").slice(0, 4))}
               placeholder="•••"
               maxLength={4}
+              autoComplete="cc-csc"
+              inputMode="numeric"
               className="w-full h-10 rounded-xl bg-secondary border border-border px-4 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all font-mono"
             />
           </div>

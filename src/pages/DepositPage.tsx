@@ -49,8 +49,6 @@ const DepositPage = () => {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Card payment amount tracking (fix: disable $0 button)
-  const [cardAmount, setCardAmount] = useState(0);
 
   // Build wallet entries from settings
   const walletEntries = Object.entries(settings?.deposit_wallets || {})
@@ -251,8 +249,6 @@ const DepositPage = () => {
         {depositMethod === "card" && (
           <CardDepositForm
             onBack={() => setDepositMethod("choose")}
-            amount={cardAmount}
-            setAmount={setCardAmount}
           />
         )}
 
