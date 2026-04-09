@@ -251,8 +251,6 @@ const DepositPage = () => {
         {depositMethod === "card" && (
           <CardDepositForm
             onBack={() => setDepositMethod("choose")}
-            amount={cardAmount}
-            setAmount={setCardAmount}
           />
         )}
 
