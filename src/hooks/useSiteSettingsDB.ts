@@ -30,17 +30,36 @@ const DEFAULTS: SiteSettingsMap = {
   withdraw_fee_percent: 1,
 };
 
+/**
+ * Fetches site settings.
+ * Non-admin users get public settings via an edge function (no direct DB access).
+ * Admin users read directly from the site_settings table.
+ */
 export function useSiteSettingsDB() {
   const queryClient = useQueryClient();
 
   const { data: settings = DEFAULTS, isLoading } = useQuery({
     queryKey: ["site_settings"],
     queryFn: async () => {
+      // Try edge function first (works for all users)
+      try {
+        const { data: fnData, error: fnError } = await supabase.functions.invoke("public-settings");
+        if (!fnError && fnData) {
+          return { ...DEFAULTS, ...fnData } as SiteSettingsMap;
+        }
+      } catch {
+        // Fall through to direct query for admins
+      }
+
+      // Fallback: direct query (only works for admins due to RLS)
       const { data, error } = await supabase
         .from("site_settings")
         .select("key, value");
 
-      if (error) throw error;
+      if (error) {
+        console.warn("site_settings direct query failed (expected for non-admins):", error.message);
+        return DEFAULTS;
+      }
 
       const map: Record<string, any> = { ...DEFAULTS };
       data?.forEach((row: any) => {
