@@ -495,12 +495,7 @@ const Index = () => {
                     >
                       <Download className="h-5 w-5" /> Install PWA
                     </Button>
-                    <a href="https://apps.apple.com/app/idYOUR_APP_ID" target="_blank" rel="noopener noreferrer" className="transition-transform hover:scale-105">
-                      <img src="https://developer.apple.com/assets/elements/badges/download-on-the-app-store.svg" alt="Download on the App Store" className="h-12 md:h-14 w-auto" />
-                    </a>
-                    <a href="https://play.google.com/store/apps/details?id=com.tronnlix.app" target="_blank" rel="noopener noreferrer" className="transition-transform hover:scale-105">
-                      <img src="https://upload.wikimedia.org/wikipedia/commons/7/78/Google_Play_Store_badge_EN.svg" alt="Get it on Google Play" className="h-12 md:h-14 w-auto" />
-                    </a>
+                    {/* App store links hidden until apps are published */}
                   </div>
                 </div>
                 <div className="hidden md:block">
