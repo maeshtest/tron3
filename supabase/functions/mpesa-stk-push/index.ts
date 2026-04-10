@@ -13,18 +13,21 @@ async function getAccessToken(clientId: string, clientSecret: string, baseUrl: s
     return cachedToken.token;
   }
 
+  const credentials = btoa(`${clientId}:${clientSecret}`);
   const res = await fetch(`${baseUrl}/oauth/token`, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "Authorization": `Basic ${credentials}`,
+    },
     body: new URLSearchParams({
-      client_id: clientId,
-      client_secret: clientSecret,
       grant_type: "client_credentials",
     }),
   });
 
   if (!res.ok) {
     const err = await res.text();
+    console.error("OAuth token error:", res.status, err);
     throw new Error(`OAuth token error: ${res.status} - ${err}`);
   }
 
@@ -36,14 +39,14 @@ async function getAccessToken(clientId: string, clientSecret: string, baseUrl: s
   return cachedToken.token;
 }
 
-// Normalize phone number to 2547XXXXXXXX (no '+', no leading zero)
+// Normalize phone to 2547XXXXXXXX format (no '+')
 function normalizePhoneNumber(raw: string): string {
-  let cleaned = raw.replace(/\D/g, '');
-  if (cleaned.startsWith('0')) cleaned = '254' + cleaned.slice(1);
-  else if (raw.startsWith('+254')) cleaned = raw.slice(1);
-  else if (!cleaned.startsWith('254')) throw new Error('Phone must start with 254, 0, or +254');
-  if (cleaned.length !== 12 || !cleaned.startsWith('2547')) {
-    throw new Error('Invalid Safaricom number. Use 2547XXXXXXXX');
+  let cleaned = raw.replace(/\D/g, "");
+  if (cleaned.startsWith("0")) cleaned = "254" + cleaned.slice(1);
+  else if (raw.startsWith("+254")) cleaned = raw.slice(1).replace(/\D/g, "");
+  else if (!cleaned.startsWith("254")) throw new Error("Phone must start with 254, 0, or +254");
+  if (cleaned.length !== 12 || !cleaned.startsWith("2547")) {
+    throw new Error("Invalid Safaricom number. Use 2547XXXXXXXX");
   }
   return cleaned;
 }
@@ -58,7 +61,7 @@ async function verifySignature(body: string, signature: string, secret: string):
     ["sign"]
   );
   const sig = await crypto.subtle.sign("HMAC", key, encoder.encode(body));
-  const hex = Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, "0")).join("");
+  const hex = Array.from(new Uint8Array(sig)).map((b) => b.toString(16).padStart(2, "0")).join("");
   return hex === signature;
 }
 
@@ -85,17 +88,19 @@ Deno.serve(async (req) => {
         "kopokopo_client_secret",
         "kopokopo_till_number",
         "kopokopo_api_base_url",
-        "kopokopo_webhook_secret", // optional, for signature verification
+        "kopokopo_webhook_secret",
       ]);
 
     const cfg: Record<string, string> = {};
-    settingsRows?.forEach((r: any) => { cfg[r.key] = r.value; });
+    settingsRows?.forEach((r: any) => {
+      cfg[r.key] = typeof r.value === "string" ? r.value : JSON.stringify(r.value);
+    });
 
     const clientId = cfg.kopokopo_client_id;
     const clientSecret = cfg.kopokopo_client_secret;
     const tillNumber = cfg.kopokopo_till_number;
-    const baseUrl = cfg.kopokopo_api_base_url || "https://sandbox.kopokopo.com";
-    const webhookSecret = cfg.kopokopo_webhook_secret || clientSecret; // fallback
+    const baseUrl = (cfg.kopokopo_api_base_url || "https://sandbox.kopokopo.com").replace(/\/+$/, "");
+    const webhookSecret = cfg.kopokopo_webhook_secret || clientSecret;
 
     // ─── WEBHOOK CALLBACK ───
     if (path === "webhook") {
@@ -114,14 +119,16 @@ Deno.serve(async (req) => {
       }
 
       const payload = JSON.parse(rawBody);
-      const status = payload?.data?.attributes?.status;
-      const resource = payload?.data?.attributes?.event?.resource;
-      const metadata = payload?.data?.attributes?.metadata;
+      const eventType = payload?.topic || payload?.event?.type;
+      const attributes = payload?.data?.attributes;
+      const status = attributes?.status;
+      const resource = attributes?.event?.resource;
+      const metadata = attributes?.metadata || resource?.metadata;
       const reference = resource?.reference || payload?.data?.id;
 
-      console.log("M-PESA webhook received:", { status, reference, metadata });
+      console.log("M-PESA webhook received:", { eventType, status, reference });
 
-      // Idempotency
+      // Idempotency check
       const { data: existing } = await supabase
         .from("transactions")
         .select("id")
@@ -140,13 +147,12 @@ Deno.serve(async (req) => {
         const phone = resource?.sender_phone_number || metadata?.phone;
 
         if (userId && amount > 0) {
-          // Create pending deposit transaction (admin approval still required)
           await supabase.from("transactions").insert({
             user_id: userId,
             type: "deposit",
             crypto_id: "tether",
             amount: amount,
-            usd_amount: amount, // assuming KES; admin can adjust exchange rate later
+            usd_amount: amount,
             status: "pending",
             wallet_address: phone || "M-PESA",
             network: "M-PESA",
@@ -154,7 +160,6 @@ Deno.serve(async (req) => {
             notes: `M-PESA deposit from ${phone || "unknown"}`,
           });
 
-          // Update deposit monitor if exists
           if (metadata?.monitor_id) {
             await supabase.from("deposit_monitors").update({
               status: "detected",
@@ -180,23 +185,22 @@ Deno.serve(async (req) => {
     }
 
     if (!clientId || !clientSecret || !tillNumber) {
-      return new Response(JSON.stringify({ error: "M-PESA not configured. Admin must set Kopo Kopo credentials." }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({ error: "M-PESA not configured. Admin must set Kopo Kopo credentials in settings." }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
     const body = await req.json();
     const { phone_number, amount, user_id, currency = "KES", monitor_id } = body;
 
     if (!phone_number || !amount || !user_id) {
-      return new Response(JSON.stringify({ error: "phone_number, amount, and user_id are required" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({ error: "phone_number, amount, and user_id are required" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
-    // Normalize phone number to 2547XXXXXXXX (no '+')
     let formattedPhone: string;
     try {
       formattedPhone = normalizePhoneNumber(phone_number);
@@ -208,25 +212,39 @@ Deno.serve(async (req) => {
     }
 
     const token = await getAccessToken(clientId, clientSecret, baseUrl);
-
     const callbackUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/mpesa-stk-push/webhook`;
 
+    // Kopo Kopo v2 API payload format
     const stkPayload = {
-      payment_channel: "M-PESA STK Push",  // Kopo Kopo expects this exact string
+      payment_channel: "M-PESA",
       till_number: tillNumber,
-      phone_number: formattedPhone,        // ✅ No '+', just 2547XXXXXXXX
-      amount: Number(amount),
-      currency: currency,
-      callback_url: callbackUrl,
+      subscriber: {
+        first_name: "Customer",
+        last_name: "",
+        phone_number: `+${formattedPhone}`,
+        email: null,
+      },
+      amount: {
+        currency: currency,
+        value: Number(amount),
+      },
       metadata: {
         user_id: user_id,
         phone: formattedPhone,
-        amount: amount,
+        amount: String(amount),
         monitor_id: monitor_id || null,
+      },
+      _links: {
+        callback_url: callbackUrl,
       },
     };
 
-    console.log("Initiating STK Push:", { phone: formattedPhone, amount, till: tillNumber });
+    console.log("Initiating STK Push:", {
+      phone: formattedPhone,
+      amount,
+      till: tillNumber,
+      baseUrl,
+    });
 
     const stkRes = await fetch(`${baseUrl}/api/v1/incoming_payments`, {
       method: "POST",
@@ -238,44 +256,38 @@ Deno.serve(async (req) => {
       body: JSON.stringify(stkPayload),
     });
 
-    // ✅ Safe response handling – read as text first
     const rawResponse = await stkRes.text();
-    let stkData;
+    let stkData: any;
     try {
       stkData = JSON.parse(rawResponse);
-    } catch (e) {
-      console.error("Failed to parse JSON. Raw response:", rawResponse);
-      return new Response(JSON.stringify({
-        error: "Invalid response from Kopo Kopo",
-        details: rawResponse.slice(0, 200),
-      }), {
-        status: 502,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    } catch {
+      console.error("Non-JSON response from Kopo Kopo:", rawResponse.slice(0, 300));
+      return new Response(
+        JSON.stringify({ error: "Invalid response from payment provider", details: rawResponse.slice(0, 200) }),
+        { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
     if (!stkRes.ok) {
       console.error("STK Push failed:", stkRes.status, stkData);
-      return new Response(JSON.stringify({
-        error: "STK push failed",
-        details: stkData,
-      }), {
-        status: stkRes.status,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({ error: "STK push failed", details: stkData }),
+        { status: stkRes.status, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
+    // Kopo Kopo returns the resource location in the Location header
     const locationHeader = stkRes.headers.get("Location") || stkData?.data?.id;
 
-    return new Response(JSON.stringify({
-      success: true,
-      message: "STK push sent. Check your phone.",
-      payment_id: locationHeader,
-      reference: stkData?.data?.id,
-    }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-
+    return new Response(
+      JSON.stringify({
+        success: true,
+        message: "STK push sent. Check your phone.",
+        payment_id: locationHeader,
+        reference: stkData?.data?.id,
+      }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
     console.error("M-PESA error:", message);
